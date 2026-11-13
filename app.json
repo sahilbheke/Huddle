@@ -32,6 +32,13 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Huddle uses your photos so you can attach proof to a check-in.",
+          "cameraPermission": "Huddle uses the camera so you can snap proof for a check-in."
+        }
       ]
     ],
     "experiments": {

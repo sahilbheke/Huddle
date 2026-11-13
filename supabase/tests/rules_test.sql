@@ -140,4 +140,38 @@ do $$ declare r record; begin
 end $$;
 reset role;
 
+
+-- Feed, today numbers, cheers and photo paths (milestone 3)
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ declare s uuid := current_setting('t.space')::uuid; r record; n int; c uuid; begin
+  select count(*) into n from space_feed(s);
+  assert n = (select count(*) from checkins where space_id = s) + (select count(*) from messages where space_id = s), 'feed has every item';
+  select * into r from space_feed(s) where kind = 'checkin' and type_key = 'run' limit 1;
+  assert r.name = 'Priya' and r.type_label = 'Running' and jsonb_array_length(r.fields) = 2 and r.cheers = 0, format('feed check-in row: %s', r);
+  assert (select bool_and(a.created_at >= b.created_at) from
+           (select created_at, row_number() over () i from space_feed(s)) a
+           join (select created_at, row_number() over () i from space_feed(s)) b on b.i = a.i + 1), 'feed newest first';
+  assert (select count(*) from space_feed(s, null, 2)) = 2, 'feed limit';
+  c := r.id;
+  assert toggle_cheer(c) = true, 'cheer on';
+  assert (select cheers from space_feed(s) where id = c) = 1 and (select cheered from space_feed(s) where id = c), 'cheer counted';
+  assert toggle_cheer(c) = false, 'cheer off';
+  assert (select cheers from space_feed(s) where id = c) = 0, 'cheer removed';
+  select * into r from space_today(s);
+  assert r.members = 2 and r.done >= 1, format('today: %s', r);
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin
+  assert (select count(*) from space_feed(current_setting('t.space')::uuid)) = 0, 'outsider sees no feed';
+  assert (select count(*) from space_today(current_setting('t.space')::uuid)) = 0, 'outsider sees no numbers';
+end $$;
+select pg_temp.expect_error(format($q$select toggle_cheer(%L)$q$, (select id from checkins limit 1)), 'not a member');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.expect_error(format($q$select create_checkin(%L, %L, '{"dist":3}', null, 'someone-else/x.jpg')$q$,
+  current_setting('t.space'), current_setting('t.run')), 'photo does not belong');
+select create_checkin(current_setting('t.space')::uuid, current_setting('t.run')::uuid, '{"dist":3}', null,
+  current_setting('t.space') || '/00000000-0000-0000-0000-00000000000b/run.jpg');
+reset role;
+
 \echo 'All rules tests passed'

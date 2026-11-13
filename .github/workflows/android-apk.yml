@@ -1,0 +1,55 @@
+# Builds an installable Android test app (APK) and attaches it to a GitHub pre-release.
+# No Expo account needed: the native project is generated on the runner and signed with a debug key,
+# which is fine for testing but not for the Play Store.
+name: Android test build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'milestone-*']
+    paths-ignore: ['**.md', 'supabase/**']
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # Public values: the URL and the publishable key ship inside every app build anyway.
+      EXPO_PUBLIC_SUPABASE_URL: https://yblcjwgcksvgiaxxqbdb.supabase.co
+      EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_c-7OI6QusWgxBRfp7ukuSQ_aGJrJ4hX
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm ci
+      - run: npx tsc --noEmit || (echo '/// <reference types="expo/types" />' > expo-env.d.ts && npx tsc --noEmit)
+      - run: npx expo prebuild --platform android --no-install
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+      - name: Rename
+        run: cp android/app/build/outputs/apk/release/app-release.apk huddle-${{ github.ref_name }}-${{ github.run_number }}.apk
+      - name: Publish pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test-${{ github.ref_name }}-${{ github.run_number }}
+          name: Huddle test build ${{ github.run_number }} (${{ github.ref_name }})
+          prerelease: true
+          target_commitish: ${{ github.sha }}
+          body: |
+            Android test build from `${{ github.ref_name }}` at ${{ github.sha }}.
+            On your Android phone, open this page, tap the .apk file below, then allow installing from your browser when asked.
+          files: huddle-*.apk
