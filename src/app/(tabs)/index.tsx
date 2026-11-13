@@ -1,6 +1,6 @@
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -9,9 +9,10 @@ import { Button } from '@/components/ui';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth';
+import { roleLabel, TEMPLATES, type Role, type Template } from '@/lib/spaces';
 import { supabase } from '@/lib/supabase';
 
-type SpaceRow = { role: 'owner' | 'admin' | 'member'; spaces: { id: string; name: string; template: string } | null };
+type SpaceRow = { role: Role; spaces: { id: string; name: string; template: Template } | null };
 
 export default function SpacesScreen() {
   const theme = useTheme();
@@ -44,6 +45,14 @@ export default function SpacesScreen() {
           <ThemedText type="small" themeColor="textSecondary">
             Signed in as {profile?.name}
           </ThemedText>
+          <View style={styles.actions}>
+            <View style={styles.grow}>
+              <Button label="New space" onPress={() => router.push('/space/new')} />
+            </View>
+            <View style={styles.grow}>
+              <Button label="Join" kind="secondary" onPress={() => router.push('/join')} />
+            </View>
+          </View>
         </View>
         <FlatList
           data={rows.filter((r) => r.spaces)}
@@ -51,21 +60,27 @@ export default function SpacesScreen() {
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
           renderItem={({ item }) => (
-            <ThemedView type="backgroundElement" style={[styles.row, { borderColor: theme.border }]}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.push({ pathname: '/space/[id]', params: { id: item.spaces!.id } })}
+              style={({ pressed }) => [
+                styles.row,
+                { borderColor: theme.border, backgroundColor: theme.backgroundElement, opacity: pressed ? 0.8 : 1 },
+              ]}>
               <ThemedText type="smallBold" style={styles.rowTitle}>
                 {item.spaces!.name}
               </ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                {item.role === 'member' ? 'Member' : item.role === 'owner' ? 'Owner' : 'Admin'}
+                {TEMPLATES.find((t) => t.key === item.spaces!.template)?.label ?? 'Space'} · {roleLabel(item.role)}
               </ThemedText>
-            </ThemedView>
+            </Pressable>
           )}
           ListEmptyComponent={
             loading ? undefined : (
               <ThemedView type="backgroundElement" style={styles.empty}>
                 <ThemedText type="smallBold">No spaces yet</ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
-                  Creating a space and joining one with an invite link come in the next update.
+                  Create one for your group, or join with an invite link from a friend.
                 </ThemedText>
               </ThemedView>
             )
@@ -104,4 +119,6 @@ const styles = StyleSheet.create({
   rowTitle: { fontSize: 16 },
   empty: { borderRadius: 14, padding: Spacing.four, gap: Spacing.one },
   footer: { paddingTop: Spacing.four },
+  actions: { flexDirection: 'row', gap: Spacing.two, paddingTop: Spacing.two },
+  grow: { flex: 1 },
 });

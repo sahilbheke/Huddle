@@ -40,6 +40,10 @@ function RootStack() {
       </Stack.Protected>
       <Stack.Protected guard={signedIn && hasName}>
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="space/new" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="space/[id]/index" />
+        <Stack.Screen name="join/index" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="join/[code]" />
       </Stack.Protected>
     </Stack>
   );
