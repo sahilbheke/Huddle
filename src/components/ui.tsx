@@ -1,4 +1,4 @@
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, type TextInputProps } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, TextInput, View, type TextInputProps } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
@@ -86,4 +86,52 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     fontSize: 18,
   },
+});
+
+export function Stepper({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+  format,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+  format?: (v: number) => string;
+}) {
+  const theme = useTheme();
+  const step = (d: number) => onChange(Math.min(max, Math.max(min, value + d)));
+  const btn = (d: number, glyph: string, a11y: string) => (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={a11y}
+      onPress={() => step(d)}
+      disabled={d < 0 ? value <= min : value >= max}
+      style={[stepperStyles.btn, { backgroundColor: theme.background, borderColor: theme.border }]}>
+      <ThemedText type="smallBold" style={{ fontSize: 18 }}>
+        {glyph}
+      </ThemedText>
+    </Pressable>
+  );
+  return (
+    <View style={stepperStyles.row}>
+      <ThemedText style={stepperStyles.label}>{label}</ThemedText>
+      {btn(-1, '−', `Less ${label.toLowerCase()}`)}
+      <ThemedText type="smallBold" style={stepperStyles.value} accessibilityLiveRegion="polite">
+        {format ? format(value) : String(value)}
+      </ThemedText>
+      {btn(1, '+', `More ${label.toLowerCase()}`)}
+    </View>
+  );
+}
+
+const stepperStyles = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  label: { flex: 1 },
+  btn: { width: 44, height: 44, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  value: { minWidth: 40, textAlign: 'center', fontSize: 16 },
 });
