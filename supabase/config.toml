@@ -1,0 +1,21 @@
+# Local Supabase (supabase start). Only the settings Huddle depends on are listed.
+project_id = "huddle"
+
+[auth]
+site_url = "huddle://"
+
+[auth.sms]
+enable_signup = true
+enable_confirmations = true
+
+# Placeholder provider so test numbers work locally without sending real SMS.
+[auth.sms.twilio]
+enabled = true
+account_sid = "placeholder"
+message_service_sid = "placeholder"
+auth_token = "placeholder"
+
+# Test numbers for local development only. Remove before `supabase config push` to production.
+[auth.sms.test_otp]
+919800000001 = "123456"
+919800000002 = "123456"
