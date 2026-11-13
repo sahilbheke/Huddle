@@ -174,4 +174,49 @@ select create_checkin(current_setting('t.space')::uuid, current_setting('t.run')
   current_setting('t.space') || '/00000000-0000-0000-0000-00000000000b/run.jpg');
 reset role;
 
+
+-- Board grid, records and admin settings (milestone 4+5)
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ declare s uuid := current_setting('t.space')::uuid; n int; t int; begin
+  select count(distinct user_id) into n from space_grid(s);
+  assert n = 2, format('grid covers every member: %s', n);
+  select count(*) into t from space_grid(s, 21) where user_id = '00000000-0000-0000-0000-00000000000b';
+  assert t = 21, format('21 rows per member: %s', t);
+  assert (select status from space_grid(s, 21) where user_id = '00000000-0000-0000-0000-00000000000b'
+          order by day desc limit 1) in ('done','today'), 'latest day is today or done';
+  assert exists (select 1 from space_records(s) where kind = 'fastest_5k'), 'records listed';
+end $$;
+
+-- A plain member cannot change settings; an admin can.
+select pg_temp.expect_error(format($q$select update_space_rules(%L, 1, 1, true, true, true, true, true)$q$,
+  current_setting('t.space')), 'only an admin');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');  -- owner
+select update_space_rules(current_setting('t.space')::uuid, 3, 0, false, false, true, true, true);
+do $$ declare r spaces; begin
+  select * into r from spaces where id = current_setting('t.space')::uuid;
+  assert r.rest_days_per_week = 3 and r.posts_per_hour = 0 and not r.chat_enabled and not r.photos_enabled, format('rules saved: %s', r);
+end $$;
+select pg_temp.expect_error(format($q$select update_space_rules(%L, 9, 1, true, true, true, true, true)$q$,
+  current_setting('t.space')), 'rest days must be');
+-- owner makes b an admin; b can then change an activity and a field
+select set_member_role(current_setting('t.space')::uuid, '00000000-0000-0000-0000-00000000000b', 'admin');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ declare s uuid := current_setting('t.space')::uuid; v_type uuid; v_field uuid; begin
+  select id into v_type from activity_types where space_id = s and key = 'swim';
+  perform set_type_enabled(v_type, false);
+  assert not (select enabled from activity_types where id = v_type), 'type disabled by admin';
+  select f.id into v_field from activity_fields f join activity_types t on t.id = f.type_id
+    where t.space_id = s and t.key = 'run' and f.key = 'time';
+  perform set_field_state(v_field, 'required');
+  assert (select state from activity_fields where id = v_field) = 'required', 'field state changed';
+  -- the primary field cannot be hidden
+  perform null;
+end $$;
+select pg_temp.expect_error(
+  format($q$select set_field_state((select f.id from activity_fields f join activity_types t on t.id=f.type_id
+    where t.space_id=%L and t.key='run' and f.is_primary), 'hidden')$q$, current_setting('t.space')),
+  'main field cannot be hidden');
+reset role;
+
 \echo 'All rules tests passed'

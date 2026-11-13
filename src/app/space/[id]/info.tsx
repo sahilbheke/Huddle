@@ -1,5 +1,5 @@
 import * as Linking from 'expo-linking';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Share, StyleSheet, View } from 'react-native';
 
@@ -128,12 +128,12 @@ export default function SpaceInfoScreen() {
         </Card>
       </Section>
 
-      <Card>
-        <ThemedText type="smallBold">Board and admin settings come next</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          Streaks, records, the last 21 days and admin settings will live on this page.
-        </ThemedText>
-      </Card>
+      <Section title="More">
+        <Button label="Board, streaks and records" onPress={() => router.push({ pathname: '/space/[id]/board', params: { id } })} />
+        {myRole === 'owner' || myRole === 'admin' ? (
+          <Button label="Admin & settings" kind="secondary" onPress={() => router.push({ pathname: '/space/[id]/admin', params: { id } })} />
+        ) : null}
+      </Section>
     </Screen>
   );
 }
