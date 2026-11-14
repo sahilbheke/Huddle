@@ -217,6 +217,57 @@ select pg_temp.expect_error(
   format($q$select set_field_state((select f.id from activity_fields f join activity_types t on t.id=f.type_id
     where t.space_id=%L and t.key='run' and f.is_primary), 'hidden')$q$, current_setting('t.space')),
   'main field cannot be hidden');
+-- ---------------------------------------------------------------------------
+-- Direct messages (milestone 7)
+-- ---------------------------------------------------------------------------
+-- a (owner) and b (member) share a space; c is an outsider.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+-- cannot message someone you share no space with, or yourself
+select pg_temp.expect_error($q$select dm_open('00000000-0000-0000-0000-00000000000c')$q$, 'from your spaces');
+select pg_temp.expect_error($q$select dm_open('00000000-0000-0000-0000-00000000000a')$q$, 'yourself');
+-- open a thread with b, and opening again returns the same thread
+select set_config('t.dm', dm_open('00000000-0000-0000-0000-00000000000b')::text, false);
+do $$ begin
+  assert dm_open('00000000-0000-0000-0000-00000000000b')::text = current_setting('t.dm'), 'dm_open is idempotent';
+  assert (select count(*) from dm_threads) = 1, 'one thread';
+end $$;
+-- a sends two messages
+select dm_send(current_setting('t.dm')::uuid, 'hey Priya');
+select dm_send(current_setting('t.dm')::uuid, 'ready for today?');
+-- b sees the thread with 2 unread, and the latest body
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ declare r record; begin
+  select * into r from dm_list() where thread_id = current_setting('t.dm')::uuid;
+  assert r.other_name = 'Sahil', format('other is Sahil: %s', r.other_name);
+  assert r.unread = 2, format('two unread for b: %s', r.unread);
+  assert r.last_body = 'ready for today?', format('last body: %s', r.last_body);
+  assert (select count(*) from dm_thread_messages(current_setting('t.dm')::uuid)) = 2, 'b reads both messages';
+end $$;
+-- b reads the thread, then unread clears; b replies
+select dm_mark_read(current_setting('t.dm')::uuid);
+do $$ begin
+  assert (select unread from dm_list() where thread_id = current_setting('t.dm')::uuid) = 0, 'unread cleared after read';
+end $$;
+select dm_send(current_setting('t.dm')::uuid, 'always');
+-- a now has 1 unread (b''s reply)
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin
+  assert (select unread from dm_list() where thread_id = current_setting('t.dm')::uuid) = 1, 'a has one unread reply';
+end $$;
+-- the outsider c cannot read the thread or its messages
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin
+  assert (select count(*) from dm_threads) = 0, 'outsider sees no threads';
+  assert (select count(*) from dm_thread_messages(current_setting('t.dm')::uuid)) = 0, 'outsider reads no messages';
+end $$;
+select pg_temp.expect_error(format($q$select dm_send(%L, 'intrude')$q$, current_setting('t.dm')), 'not your conversation');
+-- dm_contacts lists space mates, not the caller or outsiders
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin
+  assert (select count(*) from dm_contacts()) = 1, 'a has one contact (b)';
+  assert (select user_id from dm_contacts()) = '00000000-0000-0000-0000-00000000000b', 'contact is b';
+end $$;
+
 reset role;
 
 \echo 'All rules tests passed'

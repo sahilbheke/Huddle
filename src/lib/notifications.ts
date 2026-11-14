@@ -68,6 +68,15 @@ export async function notifySpace(spaceId: string, title: string, body: string) 
   }
 }
 
+/** Tells the backend to notify the other person in a direct-message thread. Best-effort. */
+export async function notifyDm(threadId: string, title: string, body: string) {
+  try {
+    await supabase.functions.invoke('notify', { body: { thread_id: threadId, title, body } });
+  } catch {
+    // A missing or undeployed function must never block sending.
+  }
+}
+
 /**
  * Sends a test notification to the signed-in user's own devices, straight through
  * Expo's push service. Lets someone confirm notifications work without waiting for

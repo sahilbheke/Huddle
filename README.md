@@ -16,7 +16,8 @@ Milestones 1–5 done; milestone 6 (notifications) in progress.
 - [x] Board: streaks, last 21 days, personal bests (milestone 4)
 - [x] Admin settings: rules, activities, what members see, admin access (milestone 5)
 - [x] Notifications: daily reminders, and a push when someone posts (milestone 6a)
-- [ ] Find friends via contacts, direct messages, owner reports
+- [x] Direct messages: one-to-one chats with people from your spaces (milestone 7)
+- [ ] Find friends via contacts, owner reports
 
 ## Run it
 
