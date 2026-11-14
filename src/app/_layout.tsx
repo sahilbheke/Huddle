@@ -44,6 +44,8 @@ function RootStack() {
         <Stack.Screen name="space/[id]/index" />
         <Stack.Screen name="space/[id]/info" />
         <Stack.Screen name="space/[id]/log" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="space/[id]/board" />
+        <Stack.Screen name="space/[id]/admin" />
         <Stack.Screen name="join/index" options={{ presentation: 'modal' }} />
         <Stack.Screen name="join/[code]" />
       </Stack.Protected>
