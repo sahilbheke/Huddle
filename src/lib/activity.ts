@@ -48,8 +48,9 @@ export function derive(kind: DeriveKind | string | null | undefined, vals: Vals)
       return d && t ? `${clock((t / d) * 100)} /100m` : null;
     }
     case 'per_set': {
+      // "reps" is the count in one set; multiply by sets for the total. No sets = one set.
       const r = num(vals.reps), s = num(vals.sets);
-      return r && s ? `${Math.round(r / s)} per set` : null;
+      return r && s ? `${r * s} total (${r} × ${s})` : null;
     }
     case 'accuracy': {
       const q = num(vals.q), c = num(vals.correct);
