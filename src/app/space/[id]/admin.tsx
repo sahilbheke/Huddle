@@ -9,6 +9,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth';
 import { roleLabel, type Role } from '@/lib/spaces';
+import { sendTestPush } from '@/lib/notifications';
 import { friendlyError, supabase } from '@/lib/supabase';
 
 type Field = { id: string; label: string; state: 'required' | 'optional' | 'hidden'; is_primary: boolean; sort: number };
@@ -23,6 +24,7 @@ type SpaceRow = {
   show_board: boolean;
   show_heatmap: boolean;
   show_records: boolean;
+  reminder_hour: number | null;
 };
 
 const STATES: Field['state'][] = ['required', 'optional', 'hidden'];
@@ -48,6 +50,9 @@ export default function AdminScreen() {
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showRecords, setShowRecords] = useState(true);
   const [savingRules, setSavingRules] = useState(false);
+  const [reminderOn, setReminderOn] = useState(true);
+  const [reminderHour, setReminderHour] = useState(20);
+  const [testMsg, setTestMsg] = useState('');
 
   const load = useCallback(async () => {
     const [s, t, m] = await Promise.all([
@@ -69,6 +74,8 @@ export default function AdminScreen() {
     setShowBoard(sp.show_board);
     setShowHeatmap(sp.show_heatmap);
     setShowRecords(sp.show_records);
+    setReminderOn(sp.reminder_hour !== null);
+    setReminderHour(sp.reminder_hour ?? 20);
     setTypes(
       ((t.data as Type[] | null) ?? []).map((x) => ({ ...x, activity_fields: [...x.activity_fields].sort((a, b) => a.sort - b.sort) })),
     );
@@ -155,6 +162,18 @@ export default function AdminScreen() {
     }
   }
 
+  async function saveReminder() {
+    setError('');
+    const { error: err } = await supabase.rpc('set_space_reminder', { p_space: id, p_hour: reminderOn ? reminderHour : null });
+    if (err) setError(friendlyError(err));
+  }
+
+  async function testNotification() {
+    setTestMsg('Sending…');
+    const n = await sendTestPush();
+    setTestMsg(n === 0 ? 'No device registered yet. Open the app on a phone (not Expo Go) and allow notifications.' : `Sent to ${n} device${n === 1 ? '' : 's'}. Check your phone.`);
+  }
+
   const stateColour = (s: Field['state']) => (s === 'required' ? theme.accent : s === 'optional' ? theme.textSecondary : theme.border);
 
   return (
@@ -179,6 +198,25 @@ export default function AdminScreen() {
           <ThemedText type="small" themeColor="textSecondary">
             Remember to tap Save rules above after changing these.
           </ThemedText>
+        </Card>
+      </Section>
+
+      <Section title="Reminders">
+        <Card>
+          <ToggleRow label="Daily reminder" hint={reminderOn ? 'Nudge members who haven\u2019t checked in' : 'No daily reminder'} value={reminderOn} onValueChange={setReminderOn} />
+          {reminderOn ? (
+            <Stepper label="Reminder time" value={reminderHour} min={0} max={23} onChange={setReminderHour} format={(h) => `${((h + 11) % 12) + 1} ${h < 12 ? 'AM' : 'PM'}`} />
+          ) : null}
+          <Button label="Save reminder" onPress={saveReminder} />
+          <ThemedText type="small" themeColor="textSecondary">
+            Notifications arrive only in the installed app, not in Expo Go.
+          </ThemedText>
+          <Button label="Send me a test notification" kind="secondary" onPress={testNotification} />
+          {testMsg ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              {testMsg}
+            </ThemedText>
+          ) : null}
         </Card>
       </Section>
 

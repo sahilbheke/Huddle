@@ -11,6 +11,7 @@ import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { derive, summarize, type ActivityField, type Vals } from '@/lib/activity';
 import { useAuth } from '@/lib/auth';
+import { notifySpace } from '@/lib/notifications';
 import { friendlyError, supabase } from '@/lib/supabase';
 
 type FeedItem = {
@@ -35,7 +36,7 @@ const PAGE = 40;
 
 export default function SpaceFeedScreen() {
   const theme = useTheme();
-  const { session } = useAuth();
+  const { session, profile } = useAuth();
   const me = session?.user.id;
   const { id } = useLocalSearchParams<{ id: string }>();
   const [space, setSpace] = useState<SpaceHead | null>(null);
@@ -125,6 +126,8 @@ export default function SpaceFeedScreen() {
     setSending(false);
     if (err) setError(friendlyError(err));
     else {
+      const who = profile?.name || 'Someone';
+      notifySpace(id, space?.name ?? 'Huddle', `${who}: ${body}`);
       setDraft('');
       refresh();
     }

@@ -9,15 +9,16 @@ import { ThemedText } from '@/components/themed-text';
 import { Button, ErrorText, Field } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { cleanVals, derive, missingRequired, type ActivityType } from '@/lib/activity';
+import { cleanVals, derive, missingRequired, summarize, type ActivityType } from '@/lib/activity';
 import { useAuth } from '@/lib/auth';
+import { notifySpace } from '@/lib/notifications';
 import { friendlyError, supabase } from '@/lib/supabase';
 
 type Photo = { uri: string; mimeType: string };
 
 export default function LogActivityScreen() {
   const theme = useTheme();
-  const { session } = useAuth();
+  const { session, profile } = useAuth();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [types, setTypes] = useState<ActivityType[]>([]);
   const [photosOn, setPhotosOn] = useState(false);
@@ -104,7 +105,12 @@ export default function LogActivityScreen() {
     });
     setBusy(false);
     if (err) setError(friendlyError(err));
-    else router.back();
+    else {
+      const who = profile?.name || 'Someone';
+      const what = summarize(fields, vals);
+      notifySpace(id, 'New check-in', `${who} logged ${type.label.toLowerCase()}${what ? ` — ${what}` : ''}`);
+      router.back();
+    }
   }
 
   return (

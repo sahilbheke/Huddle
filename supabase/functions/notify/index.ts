@@ -1,0 +1,50 @@
+// Notifies the other members of a space about a new message or check-in.
+// The sender's app calls this right after posting, with the user's access token.
+//
+// Deploy:  supabase functions deploy notify
+import { createClient } from 'jsr:@supabase/supabase-js@2';
+
+const EXPO_PUSH = 'https://exp.host/--/api/v2/push/send';
+
+type Body = { space_id: string; title: string; body: string };
+
+Deno.serve(async (req) => {
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader) return new Response('unauthorized', { status: 401 });
+
+  let payload: Body;
+  try {
+    payload = await req.json();
+  } catch {
+    return new Response('bad request', { status: 400 });
+  }
+  if (!payload?.space_id || !payload?.body) return new Response('bad request', { status: 400 });
+
+  // Use the caller's token so tokens_to_notify sees them as the member they are.
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
+    global: { headers: { Authorization: authHeader } },
+  });
+  const { data, error } = await supabase.rpc('tokens_to_notify', { p_space: payload.space_id });
+  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 403 });
+
+  const targets = (data ?? []) as { token: string }[];
+  if (targets.length === 0) return new Response(JSON.stringify({ sent: 0 }), { headers: { 'Content-Type': 'application/json' } });
+
+  const messages = targets.map((t) => ({
+    to: t.token,
+    title: payload.title?.slice(0, 80) || 'Huddle',
+    body: payload.body.slice(0, 160),
+    sound: 'default',
+    channelId: 'activity',
+  }));
+  const results: unknown[] = [];
+  for (let i = 0; i < messages.length; i += 100) {
+    const res = await fetch(EXPO_PUSH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(messages.slice(i, i + 100)),
+    });
+    results.push(await res.json());
+  }
+  return new Response(JSON.stringify({ sent: messages.length, results }), { headers: { 'Content-Type': 'application/json' } });
+});

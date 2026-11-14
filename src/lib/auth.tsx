@@ -1,6 +1,7 @@
 import type { Session } from '@supabase/supabase-js';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 
+import { registerForPush } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 
 export type Profile = {
@@ -43,11 +44,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(data.session);
       await loadProfile(data.session?.user.id);
       setReady(true);
+      if (data.session) registerForPush();
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
       // Load outside the callback: awaiting Supabase calls inside it can deadlock the client.
-      setTimeout(() => loadProfile(next?.user.id), 0);
+      setTimeout(() => {
+        loadProfile(next?.user.id);
+        if (next) registerForPush();
+      }, 0);
     });
     return () => sub.subscription.unsubscribe();
   }, [loadProfile]);
