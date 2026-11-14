@@ -285,7 +285,7 @@ function CheckinCard({ item, mine, photo, onCheer }: { item: FeedItem; mine: boo
   return (
     <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}>
       <View style={styles.cardHead}>
-        <ThemedText type="smallBold" style={styles.grow} numberOfLines={1}>
+        <ThemedText type="smallBold" style={[styles.grow, { color: theme.positive }]} numberOfLines={1}>
           {mine ? 'You' : item.name}
         </ThemedText>
         {item.type_label ? (
