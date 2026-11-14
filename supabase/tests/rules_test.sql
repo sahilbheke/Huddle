@@ -68,9 +68,15 @@ do $$ begin
   assert (select value from records where kind = 'best:run') = 5, 'longest run';
 end $$;
 
--- Second post (a message) fits the limit of 2; the third is refused
+-- Group chat is never rate-limited, whatever the hourly setting.
 select send_message(current_setting('t.space')::uuid, 'Who is up for Sunday?');
-select pg_temp.expect_error(format($q$select send_message(%L, 'again')$q$, current_setting('t.space')), 'hourly_limit');
+select send_message(current_setting('t.space')::uuid, 'and Monday?');
+select send_message(current_setting('t.space')::uuid, 'and Tuesday?');
+-- The hourly limit (2) applies to activity check-ins only. b already has one run;
+-- a second is fine, the third is refused.
+select create_checkin(current_setting('t.space')::uuid, current_setting('t.run')::uuid, '{"dist":5,"time":26}');
+select pg_temp.expect_error(format($q$select create_checkin(%L, %L, '{"dist":5,"time":27}')$q$,
+  current_setting('t.space'), current_setting('t.run')), 'hourly_limit');
 
 -- Members cannot change the rules
 update spaces set posts_per_hour = 0 where id = current_setting('t.space')::uuid;
@@ -266,6 +272,14 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
 do $$ begin
   assert (select count(*) from dm_contacts()) = 1, 'a has one contact (b)';
   assert (select user_id from dm_contacts()) = '00000000-0000-0000-0000-00000000000b', 'contact is b';
+end $$;
+
+-- Space unread indicator: marking a space read clears its count.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select mark_space_read(current_setting('t.space')::uuid);
+do $$ begin
+  assert coalesce((select unread from space_unreads() where space_id = current_setting('t.space')::uuid), 0) = 0,
+    'no unread right after marking read';
 end $$;
 
 reset role;
