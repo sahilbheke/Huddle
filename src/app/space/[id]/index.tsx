@@ -9,8 +9,9 @@ import { ThemedView } from '@/components/themed-view';
 import { ErrorText } from '@/components/ui';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { derive, summarize, type ActivityField, type Vals } from '@/lib/activity';
+import { colorForUser, derive, summarize, type ActivityField, type Vals } from '@/lib/activity';
 import { useAuth } from '@/lib/auth';
+import { notifySpace } from '@/lib/notifications';
 import { friendlyError, supabase } from '@/lib/supabase';
 
 type FeedItem = {
@@ -35,7 +36,7 @@ const PAGE = 40;
 
 export default function SpaceFeedScreen() {
   const theme = useTheme();
-  const { session } = useAuth();
+  const { session, profile } = useAuth();
   const me = session?.user.id;
   const { id } = useLocalSearchParams<{ id: string }>();
   const [space, setSpace] = useState<SpaceHead | null>(null);
@@ -125,6 +126,8 @@ export default function SpaceFeedScreen() {
     setSending(false);
     if (err) setError(friendlyError(err));
     else {
+      const who = profile?.name || 'Someone';
+      notifySpace(id, space?.name ?? 'Huddle', `${who}: ${body}`);
       setDraft('');
       refresh();
     }
@@ -261,7 +264,7 @@ function MessageBubble({ item, mine }: { item: FeedItem; mine: boolean }) {
     <View style={[styles.bubbleRow, mine && styles.mineRow]}>
       <View style={[styles.bubble, { backgroundColor: mine ? theme.accentSoft : theme.backgroundElement }]}>
         {!mine ? (
-          <ThemedText type="smallBold" style={{ color: theme.positive }}>
+          <ThemedText type="smallBold" style={{ color: colorForUser(item.user_id) }}>
             {item.name}
           </ThemedText>
         ) : null}
@@ -282,12 +285,14 @@ function CheckinCard({ item, mine, photo, onCheer }: { item: FeedItem; mine: boo
   return (
     <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}>
       <View style={styles.cardHead}>
-        <ThemedText type="smallBold" style={styles.grow}>
-          {mine ? 'You' : item.name} · {item.type_label}
+        <ThemedText type="smallBold" style={[styles.grow, { color: mine ? theme.positive : colorForUser(item.user_id) }]} numberOfLines={1}>
+          {mine ? 'You' : item.name}
         </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {time(item.created_at)}
-        </ThemedText>
+        {item.type_label ? (
+          <ThemedText type="smallBold" style={{ color: theme.accent }} numberOfLines={1}>
+            {item.type_label}
+          </ThemedText>
+        ) : null}
       </View>
       {summary ? <ThemedText style={styles.summary}>{summary}</ThemedText> : null}
       {derived ? (
@@ -303,17 +308,22 @@ function CheckinCard({ item, mine, photo, onCheer }: { item: FeedItem; mine: boo
           <View style={[styles.photo, { backgroundColor: theme.backgroundSelected }]} />
         )
       ) : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={item.cheered ? 'Remove cheer' : 'Cheer'}
-        accessibilityState={{ selected: item.cheered }}
-        onPress={onCheer}
-        style={[
-          styles.cheer,
-          { borderColor: item.cheered ? theme.accent : theme.border, backgroundColor: item.cheered ? theme.accentSoft : theme.background },
-        ]}>
-        <ThemedText type="small">👏 {item.cheers > 0 ? item.cheers : 'Cheer'}</ThemedText>
-      </Pressable>
+      <View style={styles.cardFoot}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={item.cheered ? 'Remove cheer' : 'Cheer'}
+          accessibilityState={{ selected: item.cheered }}
+          onPress={onCheer}
+          style={[
+            styles.cheer,
+            { borderColor: item.cheered ? theme.accent : theme.border, backgroundColor: item.cheered ? theme.accentSoft : theme.background },
+          ]}>
+          <ThemedText type="small">👏 {item.cheers > 0 ? item.cheers : 'Cheer'}</ThemedText>
+        </Pressable>
+        <ThemedText type="small" themeColor="textSecondary">
+          {time(item.created_at)}
+        </ThemedText>
+      </View>
     </View>
   );
 }
@@ -345,7 +355,8 @@ const styles = StyleSheet.create({
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   summary: { fontSize: 18, fontWeight: '600' },
   photo: { width: '100%', aspectRatio: 4 / 3, borderRadius: 10, marginTop: Spacing.one },
-  cheer: { alignSelf: 'flex-start', borderWidth: 1, borderRadius: 999, paddingHorizontal: Spacing.three, minHeight: 36, justifyContent: 'center', marginTop: Spacing.one },
+  cheer: { borderWidth: 1, borderRadius: 999, paddingHorizontal: Spacing.three, minHeight: 36, justifyContent: 'center' },
+  cardFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.one },
   composer: { borderTopWidth: StyleSheet.hairlineWidth, padding: Spacing.two, gap: Spacing.one },
   composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
   logBtn: { minHeight: 44, borderRadius: 12, paddingHorizontal: Spacing.three, alignItems: 'center', justifyContent: 'center' },

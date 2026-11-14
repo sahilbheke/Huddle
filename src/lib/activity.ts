@@ -48,8 +48,9 @@ export function derive(kind: DeriveKind | string | null | undefined, vals: Vals)
       return d && t ? `${clock((t / d) * 100)} /100m` : null;
     }
     case 'per_set': {
+      // "reps" is the count in one set; multiply by sets for the total. No sets = one set.
       const r = num(vals.reps), s = num(vals.sets);
-      return r && s ? `${Math.round(r / s)} per set` : null;
+      return r && s ? `${r * s} total (${r} × ${s})` : null;
     }
     case 'accuracy': {
       const q = num(vals.q), c = num(vals.correct);
@@ -93,4 +94,12 @@ export function missingRequired(fields: (ActivityField & { state: FieldState })[
     .filter((f) => f.state === 'required')
     .filter((f) => (f.kind === 'text' ? !String(vals[f.key] ?? '').trim() : !num(vals[f.key])))
     .map((f) => f.label);
+}
+
+/** A stable, bright-enough colour per member, for sender names (readable on light and dark). */
+const NAME_COLORS = ['#E8590C', '#1C7ED6', '#2F9E44', '#9C36B5', '#C2255C', '#0B7285', '#E67700', '#5F3DC4'];
+export function colorForUser(userId: string): string {
+  let h = 0;
+  for (let i = 0; i < userId.length; i++) h = (h * 31 + userId.charCodeAt(i)) >>> 0;
+  return NAME_COLORS[h % NAME_COLORS.length];
 }
