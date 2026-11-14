@@ -105,7 +105,7 @@ export default function BoardScreen() {
             </ThemedText>
           ) : (
             board.map((row, i) => (
-              <View key={row.user_id} style={styles.row}>
+              <View key={`${row.user_id}-${i}`} style={styles.row}>
                 <ThemedText type="smallBold" style={styles.rank}>
                   {i + 1}
                 </ThemedText>
@@ -155,10 +155,14 @@ export default function BoardScreen() {
                 {row.name}
               </ThemedText>
               <View style={styles.cells}>
-                {(gridByUser.get(row.user_id) ?? []).map((d) => (
+                {(gridByUser.get(row.user_id) ?? []).map((d, di) => (
                   <View
-                    key={d.day}
-                    style={[styles.cell, { backgroundColor: colour(d.status), borderColor: theme.border }, d.status === 'today' && styles.today]}
+                    key={`${row.user_id}-${d.day}-${di}`}
+                    style={[
+                      styles.cell,
+                      { backgroundColor: colour(d.status), borderColor: theme.border },
+                      d.status === 'today' ? styles.today : null,
+                    ]}
                     accessibilityLabel={`${d.day}: ${d.status}`}
                   />
                 ))}
