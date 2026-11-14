@@ -8,6 +8,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Button } from '@/components/ui';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { colorForUser } from '@/lib/activity';
 import { useAuth } from '@/lib/auth';
 import { roleLabel, TEMPLATES, type Role, type Template } from '@/lib/spaces';
 import { supabase } from '@/lib/supabase';
@@ -66,31 +67,41 @@ export default function SpacesScreen() {
           keyExtractor={(r) => r.spaces!.id}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
-          renderItem={({ item }) => (
+          renderItem={({ item }) => {
+            const color = colorForUser(item.spaces!.id);
+            return (
             <Pressable
               accessibilityRole="button"
               onPress={() => router.push({ pathname: '/space/[id]', params: { id: item.spaces!.id } })}
               style={({ pressed }) => [
                 styles.row,
-                { borderColor: theme.border, backgroundColor: theme.backgroundElement, opacity: pressed ? 0.8 : 1 },
+                { borderColor: theme.border, borderLeftColor: color, backgroundColor: theme.backgroundElement, opacity: pressed ? 0.8 : 1 },
               ]}>
-              <View style={styles.rowTop}>
-                <ThemedText type="smallBold" style={[styles.rowTitle, styles.grow]} numberOfLines={1}>
-                  {item.spaces!.name}
+              <View style={[styles.avatar, { backgroundColor: color }]}>
+                <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                  {item.spaces!.name.slice(0, 1).toUpperCase()}
                 </ThemedText>
-                {unreads[item.spaces!.id] > 0 ? (
-                  <View style={[styles.badge, { backgroundColor: theme.accent }]}>
-                    <ThemedText type="small" style={{ color: theme.accentText }}>
-                      {unreads[item.spaces!.id]}
-                    </ThemedText>
-                  </View>
-                ) : null}
               </View>
-              <ThemedText type="small" themeColor="textSecondary">
-                {TEMPLATES.find((t) => t.key === item.spaces!.template)?.label ?? 'Space'} · {roleLabel(item.role)}
-              </ThemedText>
+              <View style={styles.grow}>
+                <View style={styles.rowTop}>
+                  <ThemedText type="smallBold" style={[styles.rowTitle, styles.grow]} numberOfLines={1}>
+                    {item.spaces!.name}
+                  </ThemedText>
+                  {unreads[item.spaces!.id] > 0 ? (
+                    <View style={[styles.badge, { backgroundColor: theme.accent }]}>
+                      <ThemedText type="small" style={{ color: theme.accentText }}>
+                        {unreads[item.spaces!.id]}
+                      </ThemedText>
+                    </View>
+                  ) : null}
+                </View>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {TEMPLATES.find((t) => t.key === item.spaces!.template)?.label ?? 'Space'} · {roleLabel(item.role)}
+                </ThemedText>
+              </View>
             </Pressable>
-          )}
+            );
+          }}
           ListEmptyComponent={
             loading ? undefined : (
               <ThemedView type="backgroundElement" style={styles.empty}>
@@ -131,7 +142,8 @@ const styles = StyleSheet.create({
     maxWidth: MaxContentWidth,
     alignSelf: 'center',
   },
-  row: { borderRadius: 14, borderWidth: 1, padding: Spacing.three, gap: Spacing.half },
+  row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, borderRadius: 14, borderWidth: 1, borderLeftWidth: 5, padding: Spacing.three },
+  avatar: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   rowTop: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   rowTitle: { fontSize: 16 },
   badge: { minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 7, alignItems: 'center', justifyContent: 'center' },
