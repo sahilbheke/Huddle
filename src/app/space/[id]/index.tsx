@@ -9,7 +9,7 @@ import { ThemedView } from '@/components/themed-view';
 import { ErrorText } from '@/components/ui';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { derive, summarize, type ActivityField, type Vals } from '@/lib/activity';
+import { colorForUser, derive, summarize, type ActivityField, type Vals } from '@/lib/activity';
 import { useAuth } from '@/lib/auth';
 import { notifySpace } from '@/lib/notifications';
 import { friendlyError, supabase } from '@/lib/supabase';
@@ -264,7 +264,7 @@ function MessageBubble({ item, mine }: { item: FeedItem; mine: boolean }) {
     <View style={[styles.bubbleRow, mine && styles.mineRow]}>
       <View style={[styles.bubble, { backgroundColor: mine ? theme.accentSoft : theme.backgroundElement }]}>
         {!mine ? (
-          <ThemedText type="smallBold" style={{ color: theme.positive }}>
+          <ThemedText type="smallBold" style={{ color: colorForUser(item.user_id) }}>
             {item.name}
           </ThemedText>
         ) : null}
@@ -285,7 +285,7 @@ function CheckinCard({ item, mine, photo, onCheer }: { item: FeedItem; mine: boo
   return (
     <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}>
       <View style={styles.cardHead}>
-        <ThemedText type="smallBold" style={[styles.grow, { color: theme.positive }]} numberOfLines={1}>
+        <ThemedText type="smallBold" style={[styles.grow, { color: mine ? theme.positive : colorForUser(item.user_id) }]} numberOfLines={1}>
           {mine ? 'You' : item.name}
         </ThemedText>
         {item.type_label ? (
