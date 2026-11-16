@@ -183,8 +183,8 @@ export default function AdminScreen() {
       <Section title="Rules">
         <Card>
           <Stepper label="Rest days per week" value={rest} min={0} max={6} onChange={setRest} />
-          <Stepper label="Posts per hour, each person" value={perHour} min={0} max={20} onChange={setPerHour} format={(v) => (v === 0 ? 'Off' : String(v))} />
-          <ToggleRow label="Group chat" hint={chat ? 'Members can send messages' : 'Only check-ins can be posted'} value={chat} onValueChange={setChat} />
+          <Stepper label="Activity check-ins per hour, each person" value={perHour} min={0} max={20} onChange={setPerHour} format={(v) => (v === 0 ? 'Off' : String(v))} />
+          <ToggleRow label="Group chat" hint={chat ? 'Members can send messages (unlimited)' : 'Only check-ins can be posted'} value={chat} onValueChange={setChat} />
           <ToggleRow label="Proof photos" hint={photos ? 'Members can attach a photo' : 'No photos on check-ins'} value={photos} onValueChange={setPhotos} />
           <Button label="Save rules" onPress={saveRules} busy={savingRules} />
         </Card>

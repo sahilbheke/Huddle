@@ -70,6 +70,7 @@ export default function SpaceFeedScreen() {
     ]);
     setSpace(s.data as SpaceHead | null);
     setToday(t.data as Today | null);
+    supabase.rpc('mark_space_read', { p_space: id });
     const fresh = (f.data as FeedItem[] | null) ?? [];
     setItems((cur) => {
       if (!cur.length) {
