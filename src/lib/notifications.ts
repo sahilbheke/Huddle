@@ -1,14 +1,20 @@
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 
-// NOTE: expo-notifications / expo-device / expo-constants are imported lazily,
-// inside registerForPush, on purpose. Statically importing expo-notifications
-// pulls in native modules (e.g. ExpoApplication) at app startup, which throws
-// in Expo Go ("Cannot find native module") and crashes the whole app before it
-// can render. Loading them only when we actually try to register a push token —
-// and only on a real device — keeps Expo Go and the web build working, while a
-// standalone (EAS) build still gets full push support.
+// NOTE: expo-notifications / expo-device are imported lazily, inside
+// registerForPush, on purpose. Statically importing expo-notifications pulls in
+// native modules (e.g. ExpoApplication) that Expo Go doesn't bundle, which throws
+// ("Cannot find native module") and crashes the app. We also skip the whole thing
+// in Expo Go via executionEnvironment, so that dynamic import never runs there.
+// A standalone (EAS) build has the native modules and gets full push support.
+// expo-constants is safe to import statically (no native push dependency).
+
+/** True in Expo Go, where the push native modules aren't available. */
+function inExpoGo() {
+  return Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+}
 
 let handlerSet = false;
 
@@ -19,15 +25,13 @@ let handlerSet = false;
  * unavailable. Never throws.
  */
 export async function registerForPush(): Promise<string | null> {
-  if (Platform.OS === 'web') return null;
+  if (Platform.OS === 'web' || inExpoGo()) return null;
   try {
-    const [Notifications, Device, ConstantsMod] = await Promise.all([
+    const [Notifications, Device] = await Promise.all([
       import('expo-notifications'),
       import('expo-device'),
-      import('expo-constants'),
     ]);
     if (!Device.isDevice) return null;
-    const Constants = ConstantsMod.default;
 
     if (!handlerSet) {
       Notifications.setNotificationHandler({
