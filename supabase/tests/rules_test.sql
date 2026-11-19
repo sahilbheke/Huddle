@@ -282,6 +282,54 @@ do $$ begin
     'no unread right after marking read';
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- Leaving, forgetting, removing and deleting (milestone 8), on a fresh space
+-- ---------------------------------------------------------------------------
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select set_config('t.ms', create_space('Temp Crew', 'custom', 2, 0, true)::text, false);
+select set_config('t.mc', (select invite_code from spaces where id = current_setting('t.ms')::uuid), false);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select join_space(current_setting('t.mc'));
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select join_space(current_setting('t.mc'));
+
+-- b posts, then leaves: stays able to read, cannot post, shows as left.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select send_message(current_setting('t.ms')::uuid, 'hi from b');
+select leave_space(current_setting('t.ms')::uuid);
+do $$ declare s uuid := current_setting('t.ms')::uuid; begin
+  assert not is_active_member(s), 'b is inactive after leaving';
+  assert (select count(*) from space_feed(s)) >= 1, 'b still reads the history';
+  assert (select left_at from space_members where space_id = s and user_id = auth.uid()) is not null, 'left_at set';
+  assert (select left_at from my_spaces() where id = s) is not null, 'my_spaces shows the space as left';
+  assert (select unread from my_spaces() where id = s) = 0, 'left space shows no unread';
+end $$;
+select pg_temp.expect_error(format($q$select send_message(%L, 'again')$q$, current_setting('t.ms')), 'not a member');
+-- b forgets the space: it leaves their list.
+select forget_space(current_setting('t.ms')::uuid);
+do $$ begin assert (select count(*) from my_spaces() where id = current_setting('t.ms')::uuid) = 0, 'forgotten space is gone from the list'; end $$;
+
+-- The owner cannot leave.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.expect_error(format($q$select leave_space(%L)$q$, current_setting('t.ms')), 'owner_cannot_leave');
+
+-- An admin (c) can remove members, but not the owner or themselves.
+select set_member_role(current_setting('t.ms')::uuid, '00000000-0000-0000-0000-00000000000c', 'admin');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.expect_error(format($q$select remove_member(%L, '00000000-0000-0000-0000-00000000000a')$q$, current_setting('t.ms')), 'owner cannot be removed');
+select pg_temp.expect_error(format($q$select remove_member(%L, '00000000-0000-0000-0000-00000000000c')$q$, current_setting('t.ms')), 'remove yourself');
+-- A plain member cannot remove anyone.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select remove_member(current_setting('t.ms')::uuid, '00000000-0000-0000-0000-00000000000c');
+do $$ begin assert (select count(*) from space_members where space_id = current_setting('t.ms')::uuid and user_id = '00000000-0000-0000-0000-00000000000c') = 0, 'admin removed by owner'; end $$;
+
+-- Only the owner deletes the space; then it is gone for everyone.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.expect_error(format($q$select delete_space(%L)$q$, current_setting('t.ms')), 'only the owner');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select delete_space(current_setting('t.ms')::uuid);
+do $$ begin assert (select count(*) from spaces where id = current_setting('t.ms')::uuid) = 0, 'space deleted'; end $$;
+
 reset role;
 
 \echo 'All rules tests passed'

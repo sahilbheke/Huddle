@@ -1,4 +1,3 @@
-import { Image } from 'expo-image';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
@@ -42,35 +41,26 @@ export default function SpaceFeedScreen() {
   const [space, setSpace] = useState<SpaceHead | null>(null);
   const [today, setToday] = useState<Today | null>(null);
   const [items, setItems] = useState<FeedItem[]>([]);
-  const [photos, setPhotos] = useState<Record<string, string>>({});
+  const [iLeft, setILeft] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const loadingMore = useRef(false);
 
-  const signPhotos = useCallback(async (rows: FeedItem[]) => {
-    const paths = rows.map((r) => r.photo_path).filter((p): p is string => !!p);
-    if (!paths.length) return;
-    const { data } = await supabase.storage.from('proofs').createSignedUrls(paths, 60 * 60);
-    if (!data) return;
-    setPhotos((cur) => {
-      const next = { ...cur };
-      for (const d of data) if (d.path && d.signedUrl) next[d.path] = d.signedUrl;
-      return next;
-    });
-  }, []);
-
   /** Reloads the newest page and the header numbers, keeping older pages already loaded. */
   const refresh = useCallback(async () => {
-    const [s, t, f] = await Promise.all([
+    const [s, t, f, mem] = await Promise.all([
       supabase.from('spaces').select('name, chat_enabled, posts_per_hour').eq('id', id).maybeSingle(),
       supabase.rpc('space_today', { p_space: id }).maybeSingle(),
       supabase.rpc('space_feed', { p_space: id, p_limit: PAGE }),
+      supabase.from('space_members').select('left_at').eq('space_id', id).eq('user_id', me ?? '').maybeSingle(),
     ]);
     setSpace(s.data as SpaceHead | null);
     setToday(t.data as Today | null);
-    supabase.rpc('mark_space_read', { p_space: id });
+    const left = !!(mem.data as { left_at: string | null } | null)?.left_at;
+    setILeft(left);
+    if (!left) supabase.rpc('mark_space_read', { p_space: id });
     const fresh = (f.data as FeedItem[] | null) ?? [];
     setItems((cur) => {
       if (!cur.length) {
@@ -81,8 +71,7 @@ export default function SpaceFeedScreen() {
       const kept = cur.filter((c) => !fresh.some((n) => n.id === c.id) && oldest !== null && c.created_at < oldest);
       return [...fresh, ...kept];
     });
-    signPhotos(fresh);
-  }, [id, signPhotos]);
+  }, [id, me]);
 
   async function loadMore() {
     if (!hasMore || loadingMore.current || !items.length) return;
@@ -95,7 +84,6 @@ export default function SpaceFeedScreen() {
     const older = (data as FeedItem[] | null) ?? [];
     setItems((cur) => [...cur, ...older.filter((o) => !cur.some((c) => c.id === o.id))]);
     setHasMore(older.length === PAGE);
-    signPhotos(older);
     loadingMore.current = false;
   }
 
@@ -181,7 +169,7 @@ export default function SpaceFeedScreen() {
               item.kind === 'message' ? (
                 <MessageBubble item={item} mine={item.user_id === me} />
               ) : (
-                <CheckinCard item={item} mine={item.user_id === me} photo={item.photo_path ? photos[item.photo_path] : undefined} onCheer={() => cheer(item)} />
+                <CheckinCard item={item} mine={item.user_id === me} onCheer={() => cheer(item)} />
               )
             }
             ListHeaderComponent={
@@ -209,47 +197,60 @@ export default function SpaceFeedScreen() {
           />
 
           <View style={[styles.composer, { borderTopColor: theme.border, backgroundColor: theme.background }]}>
-            <ErrorText>{error}</ErrorText>
-            <View style={styles.composerRow}>
+            {iLeft ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Log activity"
-                onPress={() => router.push({ pathname: '/space/[id]/log', params: { id } })}
-                style={[styles.logBtn, { backgroundColor: theme.accent }, !space?.chat_enabled && styles.grow]}>
-                <ThemedText type="smallBold" style={{ color: theme.accentText }}>
-                  {space?.chat_enabled ? '+ Log' : '+ Log activity'}
+                onPress={() => router.push({ pathname: '/space/[id]/info', params: { id } })}
+                style={styles.leftBanner}>
+                <ThemedText type="small" themeColor="textSecondary" style={styles.center}>
+                  You left this space — history is read-only. Tap the name to delete it from your list.
                 </ThemedText>
               </Pressable>
-              {space?.chat_enabled ? (
-                <>
-                  <TextInput
-                    accessibilityLabel="Message"
-                    value={draft}
-                    onChangeText={setDraft}
-                    placeholder="Message"
-                    placeholderTextColor={theme.textSecondary}
-                    multiline
-                    maxLength={2000}
-                    style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
-                  />
+            ) : (
+              <>
+                <ErrorText>{error}</ErrorText>
+                <View style={styles.composerRow}>
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Send"
-                    disabled={!draft.trim() || sending}
-                    onPress={send}
-                    style={[styles.iconBtn, { backgroundColor: theme.positive, opacity: !draft.trim() || sending ? 0.5 : 1, borderColor: theme.positive }]}>
-                    <ThemedText type="smallBold" style={{ color: theme.background }}>
-                      ↑
+                    accessibilityLabel="Log activity"
+                    onPress={() => router.push({ pathname: '/space/[id]/log', params: { id } })}
+                    style={[styles.logBtn, { backgroundColor: theme.accent }, !space?.chat_enabled && styles.grow]}>
+                    <ThemedText type="smallBold" style={{ color: theme.accentText }}>
+                      {space?.chat_enabled ? '+ Log' : '+ Log activity'}
                     </ThemedText>
                   </Pressable>
-                </>
-              ) : null}
-            </View>
-            {space && !space.chat_enabled ? (
-              <ThemedText type="small" themeColor="textSecondary" style={styles.center}>
-                Group chat is off in this space. Only check-ins can be posted.
-              </ThemedText>
-            ) : null}
+                  {space?.chat_enabled ? (
+                    <>
+                      <TextInput
+                        accessibilityLabel="Message"
+                        value={draft}
+                        onChangeText={setDraft}
+                        placeholder="Message"
+                        placeholderTextColor={theme.textSecondary}
+                        multiline
+                        maxLength={2000}
+                        style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
+                      />
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Send"
+                        disabled={!draft.trim() || sending}
+                        onPress={send}
+                        style={[styles.iconBtn, { backgroundColor: theme.positive, opacity: !draft.trim() || sending ? 0.5 : 1, borderColor: theme.positive }]}>
+                        <ThemedText type="smallBold" style={{ color: theme.background }}>
+                          ↑
+                        </ThemedText>
+                      </Pressable>
+                    </>
+                  ) : null}
+                </View>
+                {space && !space.chat_enabled ? (
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.center}>
+                    Group chat is off in this space. Only check-ins can be posted.
+                  </ThemedText>
+                ) : null}
+              </>
+            )}
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -278,52 +279,47 @@ function MessageBubble({ item, mine }: { item: FeedItem; mine: boolean }) {
   );
 }
 
-function CheckinCard({ item, mine, photo, onCheer }: { item: FeedItem; mine: boolean; photo?: string; onCheer: () => void }) {
+function CheckinCard({ item, mine, onCheer }: { item: FeedItem; mine: boolean; onCheer: () => void }) {
   const theme = useTheme();
   const vals = item.vals ?? {};
   const summary = summarize(item.fields ?? [], vals);
   const derived = derive(item.derive_kind, vals);
   return (
-    <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}>
-      <View style={styles.cardHead}>
-        <ThemedText type="smallBold" style={[styles.grow, { color: mine ? theme.positive : colorForUser(item.user_id) }]} numberOfLines={1}>
-          {mine ? 'You' : item.name}
-        </ThemedText>
-        {item.type_label ? (
-          <ThemedText type="smallBold" style={{ color: theme.accent }} numberOfLines={1}>
-            {item.type_label}
+    <View style={[styles.cardRow, mine && styles.mineRow]}>
+      <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}>
+        <View style={styles.cardHead}>
+          <ThemedText type="smallBold" style={[styles.grow, { color: mine ? theme.positive : colorForUser(item.user_id) }]} numberOfLines={1}>
+            {mine ? 'You' : item.name}
+          </ThemedText>
+          {item.type_label ? (
+            <ThemedText type="smallBold" style={{ color: theme.accent }} numberOfLines={1}>
+              {item.type_label}
+            </ThemedText>
+          ) : null}
+        </View>
+        {summary ? <ThemedText style={styles.summary}>{summary}</ThemedText> : null}
+        {derived ? (
+          <ThemedText type="smallBold" style={{ color: theme.positive }}>
+            {derived}
           </ThemedText>
         ) : null}
-      </View>
-      {summary ? <ThemedText style={styles.summary}>{summary}</ThemedText> : null}
-      {derived ? (
-        <ThemedText type="smallBold" style={{ color: theme.positive }}>
-          {derived}
-        </ThemedText>
-      ) : null}
-      {item.body ? <ThemedText type="small">{item.body}</ThemedText> : null}
-      {item.photo_path ? (
-        photo ? (
-          <Image source={{ uri: photo }} style={styles.photo} contentFit="cover" accessibilityLabel={`Proof photo from ${item.name}`} />
-        ) : (
-          <View style={[styles.photo, { backgroundColor: theme.backgroundSelected }]} />
-        )
-      ) : null}
-      <View style={styles.cardFoot}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={item.cheered ? 'Remove cheer' : 'Cheer'}
-          accessibilityState={{ selected: item.cheered }}
-          onPress={onCheer}
-          style={[
-            styles.cheer,
-            { borderColor: item.cheered ? theme.accent : theme.border, backgroundColor: item.cheered ? theme.accentSoft : theme.background },
-          ]}>
-          <ThemedText type="small">👏 {item.cheers > 0 ? item.cheers : 'Cheer'}</ThemedText>
-        </Pressable>
-        <ThemedText type="small" themeColor="textSecondary">
-          {time(item.created_at)}
-        </ThemedText>
+        {item.body ? <ThemedText type="small">{item.body}</ThemedText> : null}
+        <View style={styles.cardFoot}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={item.cheered ? 'Remove cheer' : 'Cheer'}
+            accessibilityState={{ selected: item.cheered }}
+            onPress={onCheer}
+            style={[
+              styles.cheer,
+              { borderColor: item.cheered ? theme.accent : theme.border, backgroundColor: item.cheered ? theme.accentSoft : theme.background },
+            ]}>
+            <ThemedText type="small">👏 {item.cheers > 0 ? item.cheers : 'Cheer'}</ThemedText>
+          </Pressable>
+          <ThemedText type="small" themeColor="textSecondary">
+            {time(item.created_at)}
+          </ThemedText>
+        </View>
       </View>
     </View>
   );
@@ -350,14 +346,15 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', gap: Spacing.one, paddingVertical: Spacing.five, transform: [{ scaleY: -1 }] },
   bubbleRow: { flexDirection: 'row' },
   mineRow: { justifyContent: 'flex-end' },
-  bubble: { maxWidth: '82%', borderRadius: 14, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, gap: 2 },
+  bubble: { maxWidth: '70%', borderRadius: 14, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, gap: 2 },
   time: { alignSelf: 'flex-end', fontSize: 11 },
-  card: { borderRadius: 14, borderWidth: 1, padding: Spacing.three, gap: Spacing.one },
+  cardRow: { flexDirection: 'row' },
+  card: { maxWidth: '70%', borderRadius: 14, borderWidth: 1, padding: Spacing.three, gap: Spacing.one },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   summary: { fontSize: 18, fontWeight: '600' },
-  photo: { width: '100%', aspectRatio: 4 / 3, borderRadius: 10, marginTop: Spacing.one },
   cheer: { borderWidth: 1, borderRadius: 999, paddingHorizontal: Spacing.three, minHeight: 36, justifyContent: 'center' },
-  cardFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.one },
+  cardFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.one, gap: Spacing.two },
+  leftBanner: { paddingVertical: Spacing.two, paddingHorizontal: Spacing.three },
   composer: { borderTopWidth: StyleSheet.hairlineWidth, padding: Spacing.two, gap: Spacing.one },
   composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
   logBtn: { minHeight: 44, borderRadius: 12, paddingHorizontal: Spacing.three, alignItems: 'center', justifyContent: 'center' },

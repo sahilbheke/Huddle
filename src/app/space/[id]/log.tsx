@@ -10,6 +10,7 @@ import { Button, ErrorText, Field } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { cleanVals, derive, missingRequired, summarize, type ActivityType } from '@/lib/activity';
+import { PHOTOS_ENABLED } from '@/lib/spaces';
 import { useAuth } from '@/lib/auth';
 import { notifySpace } from '@/lib/notifications';
 import { friendlyError, supabase } from '@/lib/supabase';
@@ -165,7 +166,7 @@ export default function LogActivityScreen() {
         </Section>
       ) : null}
 
-      {type && photosOn ? (
+      {PHOTOS_ENABLED && type && photosOn ? (
         <Section title="Proof photo (optional)">
           {photo ? (
             <View style={styles.field}>
