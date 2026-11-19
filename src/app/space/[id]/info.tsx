@@ -77,24 +77,32 @@ export default function SpaceInfoScreen() {
     else after();
   }
 
+  // Leave/delete can't drop us back onto the now-gone space screen, so pop every
+  // pushed screen and land on the Spaces tab. router.replace('/') would leave the
+  // space feed still mounted underneath, which crashes the app on Android.
+  function toSpaces() {
+    if (router.canDismiss()) router.dismissAll();
+    else router.replace('/');
+  }
+
   function leave() {
     Alert.alert('Leave space?', `You'll stop posting in "${space!.name}" but can still read its history.`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Leave', style: 'destructive', onPress: () => run(() => supabase.rpc('leave_space', { p_space: id }), () => router.replace('/')) },
+      { text: 'Leave', style: 'destructive', onPress: () => run(() => supabase.rpc('leave_space', { p_space: id }), toSpaces) },
     ]);
   }
 
   function forget() {
     Alert.alert('Delete from your list?', `"${space!.name}" will be removed from your list. You can rejoin later with the invite code.`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => run(() => supabase.rpc('forget_space', { p_space: id }), () => router.replace('/')) },
+      { text: 'Delete', style: 'destructive', onPress: () => run(() => supabase.rpc('forget_space', { p_space: id }), toSpaces) },
     ]);
   }
 
   function deleteSpace() {
     Alert.alert('Delete space for everyone?', `This permanently deletes "${space!.name}" and all its messages and check-ins for every member. This can't be undone.`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete space', style: 'destructive', onPress: () => run(() => supabase.rpc('delete_space', { p_space: id }), () => router.replace('/')) },
+      { text: 'Delete space', style: 'destructive', onPress: () => run(() => supabase.rpc('delete_space', { p_space: id }), toSpaces) },
     ]);
   }
 
