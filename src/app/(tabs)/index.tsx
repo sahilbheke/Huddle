@@ -62,7 +62,11 @@ export default function SpacesScreen() {
             return (
             <Pressable
               accessibilityRole="button"
-              onPress={() => router.push({ pathname: '/space/[id]', params: { id: item.id } })}
+              onPress={() => {
+                // Clear the badge straight away; opening the space marks it read on the server too.
+                if (item.unread > 0) setRows((cur) => cur.map((r) => (r.id === item.id ? { ...r, unread: 0 } : r)));
+                router.push({ pathname: '/space/[id]', params: { id: item.id } });
+              }}
               style={({ pressed }) => [
                 styles.row,
                 { borderColor: theme.border, borderLeftColor: color, backgroundColor: theme.backgroundElement, opacity: pressed ? 0.8 : left ? 0.6 : 1 },

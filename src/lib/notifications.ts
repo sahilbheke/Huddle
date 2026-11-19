@@ -1,48 +1,57 @@
-import Constants from 'expo-constants';
-import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 
-// Show notifications while the app is foregrounded, too.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// NOTE: expo-notifications / expo-device / expo-constants are imported lazily,
+// inside registerForPush, on purpose. Statically importing expo-notifications
+// pulls in native modules (e.g. ExpoApplication) at app startup, which throws
+// in Expo Go ("Cannot find native module") and crashes the whole app before it
+// can render. Loading them only when we actually try to register a push token —
+// and only on a real device — keeps Expo Go and the web build working, while a
+// standalone (EAS) build still gets full push support.
 
-async function ensureAndroidChannels() {
-  if (Platform.OS !== 'android') return;
-  await Notifications.setNotificationChannelAsync('reminders', {
-    name: 'Daily reminders',
-    // eslint-disable-next-line import/namespace -- AndroidImportance is a re-exported enum the import plugin can't trace
-    importance: Notifications.AndroidImportance.HIGH,
-  });
-  await Notifications.setNotificationChannelAsync('activity', {
-    name: 'Space activity',
-    // eslint-disable-next-line import/namespace -- see above
-    importance: Notifications.AndroidImportance.DEFAULT,
-  });
-}
-
-/** The EAS/Expo project id, needed to mint a push token in a standalone build. */
-function projectId() {
-  return Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-}
+let handlerSet = false;
 
 /**
  * Asks for permission and registers this device's push token with the backend.
  * Safe to call on every sign-in; a no-op on web, simulators, and Expo Go (where
- * remote push isn't supported). Returns the token, or null when unavailable.
+ * the push native modules aren't available). Returns the token, or null when
+ * unavailable. Never throws.
  */
 export async function registerForPush(): Promise<string | null> {
-  if (Platform.OS === 'web' || !Device.isDevice) return null;
+  if (Platform.OS === 'web') return null;
   try {
-    await ensureAndroidChannels();
+    const [Notifications, Device, ConstantsMod] = await Promise.all([
+      import('expo-notifications'),
+      import('expo-device'),
+      import('expo-constants'),
+    ]);
+    if (!Device.isDevice) return null;
+    const Constants = ConstantsMod.default;
+
+    if (!handlerSet) {
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+        }),
+      });
+      handlerSet = true;
+    }
+
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('reminders', {
+        name: 'Daily reminders',
+        importance: Notifications.AndroidImportance.HIGH,
+      });
+      await Notifications.setNotificationChannelAsync('activity', {
+        name: 'Space activity',
+        importance: Notifications.AndroidImportance.DEFAULT,
+      });
+    }
+
     const existing = await Notifications.getPermissionsAsync();
     let granted = existing.granted;
     if (!granted && existing.canAskAgain) {
@@ -50,11 +59,12 @@ export async function registerForPush(): Promise<string | null> {
     }
     if (!granted) return null;
 
-    const token = (await Notifications.getExpoPushTokenAsync({ projectId: projectId() })).data;
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+    const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
     await supabase.rpc('register_push_token', { p_token: token, p_platform: Platform.OS });
     return token;
   } catch {
-    // Expo Go on Android throws here; treat as "no push" rather than crashing.
+    // Expo Go, simulators and undeployed setups land here; treat as "no push".
     return null;
   }
 }

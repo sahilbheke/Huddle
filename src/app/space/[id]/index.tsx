@@ -60,7 +60,7 @@ export default function SpaceFeedScreen() {
     setToday(t.data as Today | null);
     const left = !!(mem.data as { left_at: string | null } | null)?.left_at;
     setILeft(left);
-    if (!left) supabase.rpc('mark_space_read', { p_space: id });
+    if (!left) await supabase.rpc('mark_space_read', { p_space: id });
     const fresh = (f.data as FeedItem[] | null) ?? [];
     setItems((cur) => {
       if (!cur.length) {
