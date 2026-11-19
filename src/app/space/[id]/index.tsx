@@ -147,13 +147,20 @@ export default function SpaceFeedScreen() {
             accessibilityRole="button"
             accessibilityLabel={`${space?.name ?? 'Space'}, open space info`}
             onPress={() => router.push({ pathname: '/space/[id]/info', params: { id } })}
-            style={styles.titles}>
-            <ThemedText type="smallBold" style={styles.title} numberOfLines={1}>
-              {space?.name ?? ' '}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-              {today ? `${today.done} of ${today.members} done today · tap for info` : 'Tap for info'}
-            </ThemedText>
+            style={styles.titleRow}>
+            <View style={[styles.headAvatar, { backgroundColor: colorForUser(id) }]}>
+              <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                {(space?.name ?? ' ').slice(0, 1).toUpperCase()}
+              </ThemedText>
+            </View>
+            <View style={styles.titles}>
+              <ThemedText type="smallBold" style={styles.title} numberOfLines={1}>
+                {space?.name ?? ' '}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                {today ? `${today.done} of ${today.members} done today · tap for info` : 'Tap for info'}
+              </ThemedText>
+            </View>
           </Pressable>
         </View>
 
@@ -339,7 +346,9 @@ const styles = StyleSheet.create({
   },
   iconBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   backGlyph: { fontSize: 28, lineHeight: 30 },
-  titles: { flex: 1, minWidth: 0, minHeight: 44, justifyContent: 'center' },
+  titleRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, minHeight: 44 },
+  headAvatar: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  titles: { flex: 1, minWidth: 0, justifyContent: 'center' },
   title: { fontSize: 18 },
   list: { padding: Spacing.three, gap: Spacing.two, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
   today: { borderRadius: 14, padding: Spacing.three, gap: Spacing.half },
