@@ -1,48 +1,61 @@
-import Constants from 'expo-constants';
-import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 
-// Show notifications while the app is foregrounded, too.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// NOTE: expo-notifications / expo-device are imported lazily, inside
+// registerForPush, on purpose. Statically importing expo-notifications pulls in
+// native modules (e.g. ExpoApplication) that Expo Go doesn't bundle, which throws
+// ("Cannot find native module") and crashes the app. We also skip the whole thing
+// in Expo Go via executionEnvironment, so that dynamic import never runs there.
+// A standalone (EAS) build has the native modules and gets full push support.
+// expo-constants is safe to import statically (no native push dependency).
 
-async function ensureAndroidChannels() {
-  if (Platform.OS !== 'android') return;
-  await Notifications.setNotificationChannelAsync('reminders', {
-    name: 'Daily reminders',
-    // eslint-disable-next-line import/namespace -- AndroidImportance is a re-exported enum the import plugin can't trace
-    importance: Notifications.AndroidImportance.HIGH,
-  });
-  await Notifications.setNotificationChannelAsync('activity', {
-    name: 'Space activity',
-    // eslint-disable-next-line import/namespace -- see above
-    importance: Notifications.AndroidImportance.DEFAULT,
-  });
+/** True in Expo Go, where the push native modules aren't available. */
+function inExpoGo() {
+  return Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 }
 
-/** The EAS/Expo project id, needed to mint a push token in a standalone build. */
-function projectId() {
-  return Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-}
+let handlerSet = false;
 
 /**
  * Asks for permission and registers this device's push token with the backend.
  * Safe to call on every sign-in; a no-op on web, simulators, and Expo Go (where
- * remote push isn't supported). Returns the token, or null when unavailable.
+ * the push native modules aren't available). Returns the token, or null when
+ * unavailable. Never throws.
  */
 export async function registerForPush(): Promise<string | null> {
-  if (Platform.OS === 'web' || !Device.isDevice) return null;
+  if (Platform.OS === 'web' || inExpoGo()) return null;
   try {
-    await ensureAndroidChannels();
+    const [Notifications, Device] = await Promise.all([
+      import('expo-notifications'),
+      import('expo-device'),
+    ]);
+    if (!Device.isDevice) return null;
+
+    if (!handlerSet) {
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+        }),
+      });
+      handlerSet = true;
+    }
+
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('reminders', {
+        name: 'Daily reminders',
+        importance: Notifications.AndroidImportance.HIGH,
+      });
+      await Notifications.setNotificationChannelAsync('activity', {
+        name: 'Space activity',
+        importance: Notifications.AndroidImportance.DEFAULT,
+      });
+    }
+
     const existing = await Notifications.getPermissionsAsync();
     let granted = existing.granted;
     if (!granted && existing.canAskAgain) {
@@ -50,11 +63,12 @@ export async function registerForPush(): Promise<string | null> {
     }
     if (!granted) return null;
 
-    const token = (await Notifications.getExpoPushTokenAsync({ projectId: projectId() })).data;
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+    const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
     await supabase.rpc('register_push_token', { p_token: token, p_platform: Platform.OS });
     return token;
   } catch {
-    // Expo Go on Android throws here; treat as "no push" rather than crashing.
+    // Expo Go, simulators and undeployed setups land here; treat as "no push".
     return null;
   }
 }

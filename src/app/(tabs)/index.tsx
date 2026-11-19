@@ -13,31 +13,20 @@ import { useAuth } from '@/lib/auth';
 import { roleLabel, TEMPLATES, type Role, type Template } from '@/lib/spaces';
 import { supabase } from '@/lib/supabase';
 
-type SpaceRow = { role: Role; spaces: { id: string; name: string; template: Template } | null };
+type SpaceRow = { id: string; name: string; template: Template; role: Role; left_at: string | null; last_at: string; unread: number };
 
 export default function SpacesScreen() {
   const theme = useTheme();
-  const { profile, session, signOut } = useAuth();
+  const { profile, signOut } = useAuth();
   const [rows, setRows] = useState<SpaceRow[]>([]);
-  const [unreads, setUnreads] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [list, unread] = await Promise.all([
-      supabase
-        .from('space_members')
-        .select('role, spaces(id, name, template)')
-        .eq('user_id', session!.user.id)
-        .order('joined_at', { ascending: false }),
-      supabase.rpc('space_unreads'),
-    ]);
-    setRows((list.data as SpaceRow[] | null) ?? []);
-    const counts: Record<string, number> = {};
-    for (const u of (unread.data as { space_id: string; unread: number }[] | null) ?? []) counts[u.space_id] = u.unread;
-    setUnreads(counts);
+    const { data } = await supabase.rpc('my_spaces');
+    setRows((data as SpaceRow[] | null) ?? []);
     setLoading(false);
-  }, [session]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -63,40 +52,45 @@ export default function SpacesScreen() {
           </View>
         </View>
         <FlatList
-          data={rows.filter((r) => r.spaces)}
-          keyExtractor={(r) => r.spaces!.id}
+          data={rows}
+          keyExtractor={(r) => r.id}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />}
           renderItem={({ item }) => {
-            const color = colorForUser(item.spaces!.id);
+            const color = colorForUser(item.id);
+            const left = !!item.left_at;
             return (
             <Pressable
               accessibilityRole="button"
-              onPress={() => router.push({ pathname: '/space/[id]', params: { id: item.spaces!.id } })}
+              onPress={() => {
+                // Clear the badge straight away; opening the space marks it read on the server too.
+                if (item.unread > 0) setRows((cur) => cur.map((r) => (r.id === item.id ? { ...r, unread: 0 } : r)));
+                router.push({ pathname: '/space/[id]', params: { id: item.id } });
+              }}
               style={({ pressed }) => [
                 styles.row,
-                { borderColor: theme.border, borderLeftColor: color, backgroundColor: theme.backgroundElement, opacity: pressed ? 0.8 : 1 },
+                { borderColor: theme.border, borderLeftColor: color, backgroundColor: theme.backgroundElement, opacity: pressed ? 0.8 : left ? 0.6 : 1 },
               ]}>
               <View style={[styles.avatar, { backgroundColor: color }]}>
                 <ThemedText type="smallBold" style={{ color: '#fff' }}>
-                  {item.spaces!.name.slice(0, 1).toUpperCase()}
+                  {item.name.slice(0, 1).toUpperCase()}
                 </ThemedText>
               </View>
               <View style={styles.grow}>
                 <View style={styles.rowTop}>
                   <ThemedText type="smallBold" style={[styles.rowTitle, styles.grow]} numberOfLines={1}>
-                    {item.spaces!.name}
+                    {item.name}
                   </ThemedText>
-                  {unreads[item.spaces!.id] > 0 ? (
+                  {item.unread > 0 ? (
                     <View style={[styles.badge, { backgroundColor: theme.accent }]}>
                       <ThemedText type="small" style={{ color: theme.accentText }}>
-                        {unreads[item.spaces!.id]}
+                        {item.unread}
                       </ThemedText>
                     </View>
                   ) : null}
                 </View>
                 <ThemedText type="small" themeColor="textSecondary">
-                  {TEMPLATES.find((t) => t.key === item.spaces!.template)?.label ?? 'Space'} · {roleLabel(item.role)}
+                  {left ? 'You left · tap to view or delete' : `${TEMPLATES.find((t) => t.key === item.template)?.label ?? 'Space'} · ${roleLabel(item.role)}`}
                 </ThemedText>
               </View>
             </Pressable>

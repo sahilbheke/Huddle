@@ -28,3 +28,6 @@ export function codeFrom(input: string) {
   const fromLink = trimmed.match(/join\/([a-z0-9]+)/i);
   return (fromLink ? fromLink[1] : trimmed).toLowerCase();
 }
+
+/** Proof photos are hidden for now. Flip to true to bring the feature back. */
+export const PHOTOS_ENABLED = false;

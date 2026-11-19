@@ -7,7 +7,7 @@ import { useTheme } from '@/hooks/use-theme';
 type ButtonProps = {
   label: string;
   onPress: () => void;
-  kind?: 'primary' | 'secondary';
+  kind?: 'primary' | 'secondary' | 'destructive';
   disabled?: boolean;
   busy?: boolean;
 };
@@ -15,6 +15,9 @@ type ButtonProps = {
 export function Button({ label, onPress, kind = 'primary', disabled, busy }: ButtonProps) {
   const theme = useTheme();
   const primary = kind === 'primary';
+  const destructive = kind === 'destructive';
+  const bg = primary ? theme.accent : destructive ? theme.danger : theme.backgroundElement;
+  const fg = primary || destructive ? theme.accentText : theme.text;
   return (
     <Pressable
       accessibilityRole="button"
@@ -24,15 +27,15 @@ export function Button({ label, onPress, kind = 'primary', disabled, busy }: But
       style={({ pressed }) => [
         styles.button,
         {
-          backgroundColor: primary ? theme.accent : theme.backgroundElement,
-          borderColor: primary ? theme.accent : theme.border,
+          backgroundColor: bg,
+          borderColor: bg,
           opacity: disabled ? 0.45 : pressed ? 0.85 : 1,
         },
       ]}>
       {busy ? (
-        <ActivityIndicator color={primary ? theme.accentText : theme.text} />
+        <ActivityIndicator color={fg} />
       ) : (
-        <ThemedText type="smallBold" style={{ color: primary ? theme.accentText : theme.text, fontSize: 16 }}>
+        <ThemedText type="smallBold" style={{ color: fg, fontSize: 16 }}>
           {label}
         </ThemedText>
       )}
