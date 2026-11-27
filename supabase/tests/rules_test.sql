@@ -380,6 +380,22 @@ update spaces set photos_enabled = false where id = current_setting('t.ps')::uui
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
 select pg_temp.expect_error(format($q$select send_message(%L, null, %L)$q$, current_setting('t.ps'),
   current_setting('t.ps') || '/00000000-0000-0000-0000-00000000000b/c.jpg'), 'photos are turned off');
+-- Photo upload rule
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+update spaces set photos_enabled = true where id = current_setting('t.ps')::uuid;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ declare s text := current_setting('t.ps'); begin
+  assert can_upload_photo(s || '/00000000-0000-0000-0000-00000000000b/x.jpg'), 'member can upload to own folder';
+  assert not can_upload_photo(s || '/00000000-0000-0000-0000-00000000000a/x.jpg'), 'not into someone else''s folder';
+  assert not can_upload_photo('not-a-uuid/00000000-0000-0000-0000-00000000000b/x.jpg'), 'bad path refused';
+  assert not can_upload_photo(s || '/x.jpg'), 'path too short refused';
+end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+update spaces set photos_enabled = false where id = current_setting('t.ps')::uuid;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  assert not can_upload_photo(current_setting('t.ps') || '/00000000-0000-0000-0000-00000000000b/x.jpg'), 'photos off refused';
+end $$;
 -- Only the owner can list a space's files for cleanup.
 select pg_temp.expect_error(format($q$select space_photo_paths(%L)$q$, current_setting('t.ps')), 'only the owner');
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
