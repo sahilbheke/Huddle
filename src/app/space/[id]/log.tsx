@@ -1,5 +1,4 @@
 import { Image } from 'expo-image';
-import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -10,12 +9,10 @@ import { Button, ErrorText, Field } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { cleanVals, derive, missingRequired, summarize, type ActivityType } from '@/lib/activity';
-import { PHOTOS_ENABLED } from '@/lib/spaces';
 import { useAuth } from '@/lib/auth';
 import { notifySpace } from '@/lib/notifications';
+import { pickPhoto, removePhotos, uploadPhoto, type Photo } from '@/lib/photos';
 import { friendlyError, supabase } from '@/lib/supabase';
-
-type Photo = { uri: string; mimeType: string };
 
 export default function LogActivityScreen() {
   const theme = useTheme();
@@ -62,18 +59,10 @@ export default function LogActivityScreen() {
   }
 
   async function pick(source: 'camera' | 'library') {
-    const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.6, allowsEditing: false };
-    if (source === 'camera') {
-      const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (!perm.granted) {
-        setError('Camera access is off. You can turn it on in your phone settings.');
-        return;
-      }
-    }
-    const res = source === 'camera' ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
-    if (!res.canceled && res.assets[0]) {
-      setPhoto({ uri: res.assets[0].uri, mimeType: res.assets[0].mimeType ?? 'image/jpeg' });
-    }
+    const res = await pickPhoto(source);
+    if (!res) return;
+    if ('error' in res) setError(res.error);
+    else setPhoto(res.photo);
   }
 
   async function submit() {
@@ -87,15 +76,13 @@ export default function LogActivityScreen() {
     setBusy(true);
     let photoPath: string | null = null;
     if (photo) {
-      const ext = photo.mimeType.split('/')[1]?.replace('jpeg', 'jpg') ?? 'jpg';
-      photoPath = `${id}/${session.user.id}/${Date.now()}.${ext}`;
-      const body = await (await fetch(photo.uri)).arrayBuffer();
-      const up = await supabase.storage.from('proofs').upload(photoPath, body, { contentType: photo.mimeType });
-      if (up.error) {
+      const up = await uploadPhoto(id, session.user.id, photo);
+      if ('error' in up) {
         setBusy(false);
-        setError(`The photo didn't upload: ${up.error.message}`);
+        setError(up.error);
         return;
       }
+      photoPath = up.path;
     }
     const { error: err } = await supabase.rpc('create_checkin', {
       p_space: id,
@@ -105,8 +92,11 @@ export default function LogActivityScreen() {
       p_photo_path: photoPath,
     });
     setBusy(false);
-    if (err) setError(friendlyError(err));
-    else {
+    if (err) {
+      // The check-in wasn't saved, so don't leave its photo behind in storage.
+      removePhotos([photoPath]);
+      setError(friendlyError(err));
+    } else {
       const who = profile?.name || 'Someone';
       const what = summarize(fields, vals);
       notifySpace(id, 'New check-in', `${who} logged ${type.label.toLowerCase()}${what ? ` — ${what}` : ''}`);
@@ -166,7 +156,7 @@ export default function LogActivityScreen() {
         </Section>
       ) : null}
 
-      {PHOTOS_ENABLED && type && photosOn ? (
+      {type && photosOn ? (
         <Section title="Proof photo (optional)">
           {photo ? (
             <View style={styles.field}>

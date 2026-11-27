@@ -1,8 +1,10 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Image } from 'expo-image';
+import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FeedPhoto } from '@/components/feed-photo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ErrorText } from '@/components/ui';
@@ -11,6 +13,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { colorForUser, derive, summarize, type ActivityField, type Vals } from '@/lib/activity';
 import { useAuth } from '@/lib/auth';
 import { notifySpace } from '@/lib/notifications';
+import { pickPhoto, removePhotos, uploadPhoto, usePhotoUrls, type Photo } from '@/lib/photos';
 import { friendlyError, supabase } from '@/lib/supabase';
 
 type FeedItem = {
@@ -28,7 +31,7 @@ type FeedItem = {
   cheers: number;
   cheered: boolean;
 };
-type SpaceHead = { name: string; chat_enabled: boolean; posts_per_hour: number };
+type SpaceHead = { name: string; chat_enabled: boolean; posts_per_hour: number; photos_enabled: boolean };
 type Today = { members: number; done: number; checkins: number };
 
 const PAGE = 40;
@@ -44,14 +47,16 @@ export default function SpaceFeedScreen() {
   const [iLeft, setILeft] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [draft, setDraft] = useState('');
+  const [photo, setPhoto] = useState<Photo | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const loadingMore = useRef(false);
+  const photoUrls = usePhotoUrls(items.map((i) => i.photo_path));
 
   /** Reloads the newest page and the header numbers, keeping older pages already loaded. */
   const refresh = useCallback(async () => {
     const [s, t, f, mem] = await Promise.all([
-      supabase.from('spaces').select('name, chat_enabled, posts_per_hour').eq('id', id).maybeSingle(),
+      supabase.from('spaces').select('name, chat_enabled, posts_per_hour, photos_enabled').eq('id', id).maybeSingle(),
       supabase.rpc('space_today', { p_space: id }).maybeSingle(),
       supabase.rpc('space_feed', { p_space: id, p_limit: PAGE }),
       supabase.from('space_members').select('left_at').eq('space_id', id).eq('user_id', me ?? '').maybeSingle(),
@@ -99,6 +104,12 @@ export default function SpaceFeedScreen() {
       .channel(`space:${id}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'checkins', filter: `space_id=eq.${id}` }, refresh)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `space_id=eq.${id}` }, refresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'checkins', filter: `space_id=eq.${id}` }, refresh)
+      // Deletes can't be filtered by space, so drop the row locally instead of refetching.
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, (payload) => {
+        const gone = (payload.old as { id?: string }).id;
+        if (gone) setItems((cur) => cur.filter((c) => c.id !== gone));
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cheers' }, refresh)
       .subscribe();
     return () => {
@@ -108,17 +119,85 @@ export default function SpaceFeedScreen() {
 
   async function send() {
     const body = draft.trim();
-    if (!body) return;
+    if ((!body && !photo) || !me) return;
     setSending(true);
     setError('');
-    const { error: err } = await supabase.rpc('send_message', { p_space: id, p_body: body });
+    let photoPath: string | null = null;
+    if (photo) {
+      const up = await uploadPhoto(id, me, photo);
+      if ('error' in up) {
+        setSending(false);
+        setError(up.error);
+        return;
+      }
+      photoPath = up.path;
+    }
+    const { error: err } = await supabase.rpc('send_message', { p_space: id, p_body: body || null, p_photo_path: photoPath });
     setSending(false);
-    if (err) setError(friendlyError(err));
-    else {
+    if (err) {
+      // The message wasn't saved, so don't leave its photo behind in storage.
+      removePhotos([photoPath]);
+      setError(friendlyError(err));
+    } else {
       const who = profile?.name || 'Someone';
-      notifySpace(id, space?.name ?? 'Huddle', `${who}: ${body}`);
+      notifySpace(id, space?.name ?? 'Huddle', `${who}: ${body || '📷 Photo'}`);
       setDraft('');
+      setPhoto(null);
       refresh();
+    }
+  }
+
+  async function choosePhoto(source: 'camera' | 'library') {
+    const res = await pickPhoto(source);
+    if (!res) return;
+    if ('error' in res) setError(res.error);
+    else {
+      setError('');
+      setPhoto(res.photo);
+    }
+  }
+
+  function attach() {
+    // Web has no camera picker or multi-button alerts, so go straight to the file chooser.
+    if (Platform.OS === 'web') return choosePhoto('library');
+    Alert.alert('Add a photo', undefined, [
+      { text: 'Take photo', onPress: () => choosePhoto('camera') },
+      { text: 'Choose from library', onPress: () => choosePhoto('library') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+
+  /** Long-press on your own post: delete a message, or take the photo off a check-in. Either way the file is deleted. */
+  function manage(item: FeedItem) {
+    if (item.user_id !== me || iLeft) return;
+    if (item.kind === 'message') {
+      Alert.alert('Delete message?', item.photo_path ? 'The photo is deleted too.' : undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const { data, error: err } = await supabase.rpc('delete_message', { p_message: item.id });
+            if (err) return setError(friendlyError(err));
+            await removePhotos([data as string | null]);
+            setItems((cur) => cur.filter((c) => c.id !== item.id));
+          },
+        },
+      ]);
+    } else if (item.photo_path) {
+      Alert.alert('Remove photo?', 'The check-in stays; only the photo is deleted.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove photo',
+          style: 'destructive',
+          onPress: async () => {
+            const { data, error: err } = await supabase.rpc('remove_checkin_photo', { p_checkin: item.id });
+            if (err) return setError(friendlyError(err));
+            await removePhotos([data as string | null]);
+            setItems((cur) => cur.map((c) => (c.id === item.id ? { ...c, photo_path: null } : c)));
+          },
+        },
+      ]);
     }
   }
 
@@ -174,9 +253,15 @@ export default function SpaceFeedScreen() {
             onEndReachedThreshold={0.4}
             renderItem={({ item }) =>
               item.kind === 'message' ? (
-                <MessageBubble item={item} mine={item.user_id === me} />
+                <MessageBubble item={item} mine={item.user_id === me} photo={item.photo_path ? photoUrls[item.photo_path] : undefined} onLongPress={() => manage(item)} />
               ) : (
-                <CheckinCard item={item} mine={item.user_id === me} onCheer={() => cheer(item)} />
+                <CheckinCard
+                  item={item}
+                  mine={item.user_id === me}
+                  photo={item.photo_path ? photoUrls[item.photo_path] : undefined}
+                  onCheer={() => cheer(item)}
+                  onLongPress={() => manage(item)}
+                />
               )
             }
             ListHeaderComponent={
@@ -216,6 +301,19 @@ export default function SpaceFeedScreen() {
             ) : (
               <>
                 <ErrorText>{error}</ErrorText>
+                {photo ? (
+                  <View style={styles.attachRow}>
+                    <Image source={{ uri: photo.uri }} style={styles.attachThumb} contentFit="cover" accessibilityLabel="Photo to send" />
+                    <ThemedText type="small" themeColor="textSecondary" style={styles.grow}>
+                      Photo attached. Add a caption or send it as is.
+                    </ThemedText>
+                    <Pressable accessibilityRole="button" accessibilityLabel="Remove photo" onPress={() => setPhoto(null)} hitSlop={12}>
+                      <ThemedText type="smallBold" themeColor="textSecondary">
+                        ✕
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                ) : null}
                 <View style={styles.composerRow}>
                   <Pressable
                     accessibilityRole="button"
@@ -228,6 +326,16 @@ export default function SpaceFeedScreen() {
                   </Pressable>
                   {space?.chat_enabled ? (
                     <>
+                      {space.photos_enabled ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Add a photo"
+                          onPress={attach}
+                          disabled={sending}
+                          style={[styles.iconBtn, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+                          <ThemedText>📷</ThemedText>
+                        </Pressable>
+                      ) : null}
                       <TextInput
                         accessibilityLabel="Message"
                         value={draft}
@@ -241,9 +349,12 @@ export default function SpaceFeedScreen() {
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="Send"
-                        disabled={!draft.trim() || sending}
+                        disabled={(!draft.trim() && !photo) || sending}
                         onPress={send}
-                        style={[styles.iconBtn, { backgroundColor: theme.positive, opacity: !draft.trim() || sending ? 0.5 : 1, borderColor: theme.positive }]}>
+                        style={[
+                          styles.iconBtn,
+                          { backgroundColor: theme.positive, opacity: (!draft.trim() && !photo) || sending ? 0.5 : 1, borderColor: theme.positive },
+                        ]}>
                         <ThemedText type="smallBold" style={{ color: theme.background }}>
                           ↑
                         </ThemedText>
@@ -267,33 +378,40 @@ export default function SpaceFeedScreen() {
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-function MessageBubble({ item, mine }: { item: FeedItem; mine: boolean }) {
+type PostProps = { item: FeedItem; mine: boolean; photo?: string; onLongPress: () => void };
+
+function MessageBubble({ item, mine, photo, onLongPress }: PostProps) {
   const theme = useTheme();
   return (
     <View style={[styles.bubbleRow, mine && styles.mineRow]}>
-      <View style={[styles.bubble, { backgroundColor: mine ? theme.accentSoft : theme.backgroundElement }]}>
+      <Pressable
+        onLongPress={onLongPress}
+        style={[styles.bubble, item.photo_path && styles.photoBubble, { backgroundColor: mine ? theme.accentSoft : theme.backgroundElement }]}>
         {!mine ? (
           <ThemedText type="smallBold" style={{ color: colorForUser(item.user_id) }}>
             {item.name}
           </ThemedText>
         ) : null}
-        <ThemedText>{item.body}</ThemedText>
+        {item.photo_path ? <FeedPhoto uri={photo} label={`Photo from ${mine ? 'you' : item.name}`} /> : null}
+        {item.body ? <ThemedText>{item.body}</ThemedText> : null}
         <ThemedText type="small" themeColor="textSecondary" style={styles.time}>
           {time(item.created_at)}
         </ThemedText>
-      </View>
+      </Pressable>
     </View>
   );
 }
 
-function CheckinCard({ item, mine, onCheer }: { item: FeedItem; mine: boolean; onCheer: () => void }) {
+function CheckinCard({ item, mine, photo, onCheer, onLongPress }: PostProps & { onCheer: () => void }) {
   const theme = useTheme();
   const vals = item.vals ?? {};
   const summary = summarize(item.fields ?? [], vals);
   const derived = derive(item.derive_kind, vals);
   return (
     <View style={[styles.cardRow, mine && styles.mineRow]}>
-      <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}>
+      <Pressable
+        onLongPress={onLongPress}
+        style={[styles.card, item.photo_path && styles.photoBubble, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}>
         <View style={styles.cardHead}>
           <ThemedText type="smallBold" style={[styles.grow, { color: mine ? theme.positive : colorForUser(item.user_id) }]} numberOfLines={1}>
             {mine ? 'You' : item.name}
@@ -310,6 +428,7 @@ function CheckinCard({ item, mine, onCheer }: { item: FeedItem; mine: boolean; o
             {derived}
           </ThemedText>
         ) : null}
+        {item.photo_path ? <FeedPhoto uri={photo} label={`Proof photo from ${mine ? 'you' : item.name}`} /> : null}
         {item.body ? <ThemedText type="small">{item.body}</ThemedText> : null}
         <View style={styles.cardFoot}>
           <Pressable
@@ -327,7 +446,7 @@ function CheckinCard({ item, mine, onCheer }: { item: FeedItem; mine: boolean; o
             {time(item.created_at)}
           </ThemedText>
         </View>
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -355,6 +474,9 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', gap: Spacing.one, paddingVertical: Spacing.five, transform: [{ scaleY: -1 }] },
   bubbleRow: { flexDirection: 'row' },
   mineRow: { justifyContent: 'flex-end' },
+  photoBubble: { width: '70%' },
+  attachRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
+  attachThumb: { width: 48, height: 48, borderRadius: 8 },
   bubble: { maxWidth: '70%', borderRadius: 14, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, gap: 2 },
   time: { alignSelf: 'flex-end', fontSize: 11 },
   cardRow: { flexDirection: 'row' },

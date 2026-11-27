@@ -10,6 +10,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { colorForUser } from '@/lib/activity';
 import { useAuth } from '@/lib/auth';
+import { removeSpacePhotos } from '@/lib/photos';
 import { roleLabel, type Role, type Space } from '@/lib/spaces';
 import { friendlyError, supabase } from '@/lib/supabase';
 
@@ -102,7 +103,11 @@ export default function SpaceInfoScreen() {
   function deleteSpace() {
     Alert.alert('Delete space for everyone?', `This permanently deletes "${space!.name}" and all its messages and check-ins for every member. This can't be undone.`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete space', style: 'destructive', onPress: () => run(() => supabase.rpc('delete_space', { p_space: id }), toSpaces) },
+      { text: 'Delete space', style: 'destructive', onPress: () => run(async () => {
+          // Photos aren't removed with the database rows, so delete the files first.
+          await removeSpacePhotos(id);
+          return supabase.rpc('delete_space', { p_space: id });
+        }, toSpaces) },
     ]);
   }
 
