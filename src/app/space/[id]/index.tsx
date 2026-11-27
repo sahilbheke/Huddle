@@ -13,7 +13,7 @@ import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { colorForUser, derive, summarize, type ActivityField, type Vals } from '@/lib/activity';
 import { useAuth } from '@/lib/auth';
-import { notifySpace } from '@/lib/notifications';
+import { notifySpace, setActiveChat } from '@/lib/notifications';
 import { pickPhoto, removePhotos, uploadPhoto, usePhotoUrls, type Photo } from '@/lib/photos';
 import { friendlyError, supabase } from '@/lib/supabase';
 
@@ -116,6 +116,15 @@ export default function SpaceFeedScreen() {
     useCallback(() => {
       refresh();
     }, [refresh]),
+  );
+
+  // While this space is open its notifications are read: clear them, and don't show new ones.
+  const spaceName = space?.name;
+  useFocusEffect(
+    useCallback(() => {
+      setActiveChat({ spaceId: id, title: spaceName });
+      return () => setActiveChat(null);
+    }, [id, spaceName]),
   );
 
   // Live updates: any new check-in, message or cheer in this space refreshes the newest page.

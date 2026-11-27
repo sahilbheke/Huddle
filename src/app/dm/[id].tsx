@@ -1,8 +1,9 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Avatar, DaySeparator, dayLabel } from '@/components/space-chat';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ErrorText } from '@/components/ui';
@@ -10,11 +11,30 @@ import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { type DmMessage } from '@/lib/dm';
 import { useAuth } from '@/lib/auth';
-import { notifyDm } from '@/lib/notifications';
+import { notifyDm, setActiveChat } from '@/lib/notifications';
 import { friendlyError, supabase } from '@/lib/supabase';
 
 const PAGE = 40;
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const dayKey = (iso: string) => new Date(iso).toDateString();
+
+type Row = { kind: 'day'; id: string; label: string } | { kind: 'msg'; id: string; item: DmMessage; last: boolean };
+
+/** Newest-first messages into inverted-list rows: a day label above each day, and a tail on the last bubble of a run. */
+function buildRows(items: DmMessage[], hasMore: boolean): Row[] {
+  const now = new Date();
+  const rows: Row[] = [];
+  items.forEach((item, i) => {
+    const newer = items[i - 1];
+    const older = items[i + 1];
+    const last = !newer || newer.sender_id !== item.sender_id || dayKey(newer.created_at) !== dayKey(item.created_at);
+    rows.push({ kind: 'msg', id: item.id, item, last });
+    if (older ? dayKey(older.created_at) !== dayKey(item.created_at) : !hasMore) {
+      rows.push({ kind: 'day', id: `day-${dayKey(item.created_at)}`, label: dayLabel(item.created_at, now) });
+    }
+  });
+  return rows;
+}
 
 export default function DmThreadScreen() {
   const theme = useTheme();
@@ -23,6 +43,7 @@ export default function DmThreadScreen() {
   const params = useLocalSearchParams<{ id: string; name?: string }>();
   const id = params.id;
   const [name, setName] = useState(params.name ?? 'Chat');
+  const [otherId, setOtherId] = useState<string | null>(null);
   const [items, setItems] = useState<DmMessage[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [draft, setDraft] = useState('');
@@ -59,17 +80,25 @@ export default function DmThreadScreen() {
     loadingMore.current = false;
   }
 
-  // Fill in the other person's name if we arrived without it.
+  // The other person's id (for their avatar colour), and their name if we arrived without it.
   useEffect(() => {
-    if (params.name) return;
     supabase
       .rpc('dm_thread_head', { p_thread: id })
       .maybeSingle()
       .then(({ data }) => {
-        const head = data as { other_name: string } | null;
-        if (head?.other_name) setName(head.other_name);
+        const head = data as { other_id: string; other_name: string } | null;
+        if (head?.other_id) setOtherId(head.other_id);
+        if (head?.other_name && !params.name) setName(head.other_name);
       });
   }, [id, params.name]);
+
+  // While this chat is open its notifications are read: clear them, and don't show new ones.
+  useFocusEffect(
+    useCallback(() => {
+      setActiveChat({ threadId: id, title: name });
+      return () => setActiveChat(null);
+    }, [id, name]),
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -103,6 +132,9 @@ export default function DmThreadScreen() {
     }
   }
 
+  const rows = useMemo(() => buildRows(items, hasMore), [items, hasMore]);
+  const canSend = !!draft.trim() && !sending;
+
   return (
     <ThemedView style={styles.fill}>
       <SafeAreaView style={styles.fill} edges={['top', 'bottom']}>
@@ -112,9 +144,10 @@ export default function DmThreadScreen() {
             accessibilityLabel="Back"
             onPress={() => (router.canGoBack() ? router.back() : router.replace('/chats'))}
             hitSlop={12}
-            style={[styles.iconBtn, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            style={styles.backBtn}>
             <ThemedText style={styles.backGlyph}>‹</ThemedText>
           </Pressable>
+          <Avatar userId={otherId ?? id} name={name} size={38} />
           <ThemedText type="smallBold" style={styles.title} numberOfLines={1}>
             {name}
           </ThemedText>
@@ -123,12 +156,14 @@ export default function DmThreadScreen() {
         <KeyboardAvoidingView style={styles.fill} behavior="padding">
           <FlatList
             inverted
-            data={items}
-            keyExtractor={(i) => i.id}
+            data={rows}
+            keyExtractor={(r) => r.id}
             contentContainerStyle={styles.list}
             onEndReached={loadMore}
             onEndReachedThreshold={0.4}
-            renderItem={({ item }) => <Bubble item={item} mine={item.sender_id === me} />}
+            renderItem={({ item: row }) =>
+              row.kind === 'day' ? <DaySeparator label={row.label} /> : <Bubble item={row.item} mine={row.item.sender_id === me} last={row.last} />
+            }
             ListEmptyComponent={
               <View style={styles.empty}>
                 <ThemedText type="smallBold">No messages yet</ThemedText>
@@ -142,25 +177,25 @@ export default function DmThreadScreen() {
           <View style={[styles.composer, { borderTopColor: theme.border, backgroundColor: theme.background }]}>
             <ErrorText>{error}</ErrorText>
             <View style={styles.composerRow}>
-              <TextInput
-                accessibilityLabel="Message"
-                value={draft}
-                onChangeText={setDraft}
-                placeholder="Message"
-                placeholderTextColor={theme.textSecondary}
-                multiline
-                maxLength={2000}
-                style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
-              />
+              <View style={[styles.inputPill, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+                <TextInput
+                  accessibilityLabel="Message"
+                  value={draft}
+                  onChangeText={setDraft}
+                  placeholder={`Message ${name.split(' ')[0]}`}
+                  placeholderTextColor={theme.textSecondary}
+                  multiline
+                  maxLength={2000}
+                  style={[styles.input, { color: theme.text }]}
+                />
+              </View>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Send"
-                disabled={!draft.trim() || sending}
+                disabled={!canSend}
                 onPress={send}
-                style={[styles.iconBtn, { backgroundColor: theme.positive, opacity: !draft.trim() || sending ? 0.5 : 1, borderColor: theme.positive }]}>
-                <ThemedText type="smallBold" style={{ color: theme.background }}>
-                  ↑
-                </ThemedText>
+                style={[styles.sendBtn, { backgroundColor: theme.accent, opacity: canSend ? 1 : 0.4 }]}>
+                <ThemedText style={[styles.sendGlyph, { color: theme.accentText }]}>➤</ThemedText>
               </Pressable>
             </View>
           </View>
@@ -170,11 +205,16 @@ export default function DmThreadScreen() {
   );
 }
 
-function Bubble({ item, mine }: { item: DmMessage; mine: boolean }) {
+function Bubble({ item, mine, last }: { item: DmMessage; mine: boolean; last: boolean }) {
   const theme = useTheme();
   return (
     <View style={[styles.bubbleRow, mine && styles.mineRow]}>
-      <View style={[styles.bubble, { backgroundColor: mine ? theme.accentSoft : theme.backgroundElement }]}>
+      <View
+        style={[
+          styles.bubble,
+          { backgroundColor: mine ? theme.accentSoft : theme.backgroundElement },
+          last && (mine ? styles.tailRight : styles.tailLeft),
+        ]}>
         <ThemedText>{item.body}</ThemedText>
         <ThemedText type="small" themeColor="textSecondary" style={styles.time}>
           {time(item.created_at)}
@@ -189,21 +229,26 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingHorizontal: Spacing.three,
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.two,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  iconBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  backGlyph: { fontSize: 28, lineHeight: 30 },
-  title: { flex: 1, fontSize: 18 },
-  list: { padding: Spacing.three, gap: Spacing.two, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
+  backBtn: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
+  backGlyph: { fontSize: 32, lineHeight: 36 },
+  title: { flex: 1, fontSize: 18, lineHeight: 24 },
+  list: { paddingHorizontal: Spacing.two + 2, paddingVertical: Spacing.two, gap: 6, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
   empty: { alignItems: 'center', gap: Spacing.one, paddingVertical: Spacing.five, transform: [{ scaleY: -1 }] },
   bubbleRow: { flexDirection: 'row' },
   mineRow: { justifyContent: 'flex-end' },
-  bubble: { maxWidth: '82%', borderRadius: 14, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, gap: 2 },
-  time: { alignSelf: 'flex-end', fontSize: 11 },
+  bubble: { maxWidth: '80%', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 7, gap: 2 },
+  tailLeft: { borderBottomLeftRadius: 4 },
+  tailRight: { borderBottomRightRadius: 4 },
+  time: { alignSelf: 'flex-end', fontSize: 11, lineHeight: 14 },
   composer: { borderTopWidth: StyleSheet.hairlineWidth, padding: Spacing.two, gap: Spacing.one },
   composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  input: { flex: 1, minHeight: 44, maxHeight: 120, borderRadius: 12, borderWidth: 1, paddingHorizontal: Spacing.three, paddingVertical: 10, fontSize: 16 },
+  inputPill: { flex: 1, minHeight: 48, borderRadius: 24, borderWidth: 1, paddingHorizontal: Spacing.three },
+  input: { minHeight: 46, maxHeight: 120, paddingTop: 12, paddingBottom: 12, fontSize: 16 },
+  sendBtn: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  sendGlyph: { fontSize: 20, lineHeight: 24, marginLeft: 3 },
 });

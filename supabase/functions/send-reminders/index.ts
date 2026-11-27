@@ -23,7 +23,8 @@ function message(d: Due) {
     d.streak > 0
       ? `Keep your ${d.streak}-day streak alive — log today's activity.`
       : `Don't miss today in ${d.space_name}. Log your activity to stay on track.`;
-  return { to: d.token, title, body, sound: 'default', priority: 'high', channelId: 'reminders' };
+  // space_id lets a tap open the space, and opening it clears the reminder.
+  return { to: d.token, title, body, sound: 'default', priority: 'high', channelId: 'reminders', data: { space_id: d.space_id } };
 }
 
 Deno.serve(async (req) => {
