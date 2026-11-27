@@ -45,7 +45,6 @@ export default function AdminScreen() {
   const [rest, setRest] = useState(2);
   const [perHour, setPerHour] = useState(2);
   const [chat, setChat] = useState(true);
-  const [photos, setPhotos] = useState(true);
   const [showBoard, setShowBoard] = useState(true);
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showRecords, setShowRecords] = useState(true);
@@ -70,7 +69,6 @@ export default function AdminScreen() {
     setRest(sp.rest_days_per_week);
     setPerHour(sp.posts_per_hour);
     setChat(sp.chat_enabled);
-    setPhotos(sp.photos_enabled);
     setShowBoard(sp.show_board);
     setShowHeatmap(sp.show_heatmap);
     setShowRecords(sp.show_records);
@@ -106,7 +104,7 @@ export default function AdminScreen() {
       p_rest: rest,
       p_per_hour: perHour,
       p_chat: chat,
-      p_photos: photos,
+      p_photos: true, // photos are always on now
       p_show_board: showBoard,
       p_show_heatmap: showHeatmap,
       p_show_records: showRecords,
@@ -185,7 +183,6 @@ export default function AdminScreen() {
           <Stepper label="Rest days per week" value={rest} min={0} max={6} onChange={setRest} />
           <Stepper label="Activity check-ins per hour, each person" value={perHour} min={0} max={20} onChange={setPerHour} format={(v) => (v === 0 ? 'Off' : String(v))} />
           <ToggleRow label="Group chat" hint={chat ? 'Members can send messages (unlimited)' : 'Only check-ins can be posted'} value={chat} onValueChange={setChat} />
-          <ToggleRow label="Photos" hint={photos ? 'Members can share photos in chat and on check-ins' : 'No photos in this space'} value={photos} onValueChange={setPhotos} />
           <Button label="Save rules" onPress={saveRules} busy={savingRules} />
         </Card>
       </Section>

@@ -31,7 +31,7 @@ type FeedItem = {
   cheers: number;
   cheered: boolean;
 };
-type SpaceHead = { name: string; chat_enabled: boolean; posts_per_hour: number; photos_enabled: boolean };
+type SpaceHead = { name: string; chat_enabled: boolean; posts_per_hour: number };
 type Today = { members: number; done: number; checkins: number };
 
 const PAGE = 40;
@@ -56,7 +56,7 @@ export default function SpaceFeedScreen() {
   /** Reloads the newest page and the header numbers, keeping older pages already loaded. */
   const refresh = useCallback(async () => {
     const [s, t, f, mem] = await Promise.all([
-      supabase.from('spaces').select('name, chat_enabled, posts_per_hour, photos_enabled').eq('id', id).maybeSingle(),
+      supabase.from('spaces').select('name, chat_enabled, posts_per_hour').eq('id', id).maybeSingle(),
       supabase.rpc('space_today', { p_space: id }).maybeSingle(),
       supabase.rpc('space_feed', { p_space: id, p_limit: PAGE }),
       supabase.from('space_members').select('left_at').eq('space_id', id).eq('user_id', me ?? '').maybeSingle(),
@@ -326,16 +326,14 @@ export default function SpaceFeedScreen() {
                   </Pressable>
                   {space?.chat_enabled ? (
                     <>
-                      {space.photos_enabled ? (
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Add a photo"
-                          onPress={attach}
-                          disabled={sending}
-                          style={[styles.iconBtn, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-                          <ThemedText>📷</ThemedText>
-                        </Pressable>
-                      ) : null}
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Add a photo"
+                        onPress={attach}
+                        disabled={sending}
+                        style={[styles.iconBtn, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+                        <ThemedText>📷</ThemedText>
+                      </Pressable>
                       <TextInput
                         accessibilityLabel="Message"
                         value={draft}
