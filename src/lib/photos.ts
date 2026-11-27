@@ -1,6 +1,9 @@
+import { File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
+import * as MediaLibrary from 'expo-media-library';
 import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 
@@ -70,12 +73,16 @@ export async function removeSpacePhotos(spaceId: string) {
 }
 
 const SIGNED_URL_SECONDS = 60 * 60;
-const urlCache = new Map<string, { url: string; expires: number }>();
+/** url is null when the file is gone from storage. */
+const urlCache = new Map<string, { url: string | null; expires: number }>();
 
-/** Signed URLs for private photos, fetched in one batch and cached for most of their lifetime. */
+/**
+ * Signed URLs for private photos, fetched in one batch and cached for most of their lifetime.
+ * A path maps to a URL, to null when the file was deleted from storage, or is absent while loading.
+ */
 export function usePhotoUrls(paths: (string | null | undefined)[]) {
   const key = [...new Set(paths.filter((p): p is string => !!p))].sort().join('|');
-  const [fetched, setFetched] = useState<Record<string, string>>({});
+  const [fetched, setFetched] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     const now = Date.now();
@@ -85,14 +92,17 @@ export function usePhotoUrls(paths: (string | null | undefined)[]) {
     supabase.storage
       .from(PHOTO_BUCKET)
       .createSignedUrls(missing, SIGNED_URL_SECONDS)
-      .then(({ data }) => {
-        const got: Record<string, string> = {};
-        for (const d of data ?? []) {
-          if (d.path && d.signedUrl) {
-            got[d.path] = d.signedUrl;
-            urlCache.set(d.path, { url: d.signedUrl, expires: Date.now() + (SIGNED_URL_SECONDS - 300) * 1000 });
-          }
-        }
+      .then(({ data, error }) => {
+        if (error || !data) return; // network trouble: leave them loading, try again next time
+        const got: Record<string, string | null> = {};
+        const expires = Date.now() + (SIGNED_URL_SECONDS - 300) * 1000;
+        missing.forEach((path, i) => {
+          const d = data[i];
+          // Storage answers per file; an error here means the file no longer exists.
+          const url = d && !d.error && d.signedUrl ? d.signedUrl : null;
+          got[path] = url;
+          urlCache.set(path, { url, expires });
+        });
         if (live) setFetched((cur) => ({ ...cur, ...got }));
       });
     return () => {
@@ -101,10 +111,41 @@ export function usePhotoUrls(paths: (string | null | undefined)[]) {
   }, [key]);
 
   // Cached URLs (possibly fetched by another screen) first, then this screen's fresh ones.
-  const urls: Record<string, string> = {};
+  const urls: Record<string, string | null> = {};
   for (const p of key ? key.split('|') : []) {
-    const url = fetched[p] ?? urlCache.get(p)?.url;
-    if (url) urls[p] = url;
+    const hit = p in fetched ? fetched[p] : urlCache.get(p)?.url;
+    if (hit !== undefined) urls[p] = hit;
   }
   return urls;
+}
+
+export type DownloadResult = 'saved' | 'opened' | 'unavailable' | { error: string };
+
+/** Saves a photo to the phone's gallery (on web, opens it in a new tab). */
+export async function downloadPhoto(url: string): Promise<DownloadResult> {
+  if (Platform.OS === 'web') {
+    window.open(url, '_blank');
+    return 'opened';
+  }
+  const perm = await MediaLibrary.requestPermissionsAsync(true, ['photo']);
+  if (!perm.granted) return { error: 'Allow photo access in your phone settings to save photos.' };
+  let file: File | null = null;
+  try {
+    file = await File.downloadFileAsync(url, new File(Paths.cache, `huddle-${Date.now()}.jpg`));
+  } catch {
+    // The URL was valid a moment ago, so a failed download almost always means the file is gone.
+    const head = await fetch(url, { method: 'HEAD' }).catch(() => null);
+    if (head && (head.status === 400 || head.status === 404)) return 'unavailable';
+    return { error: "Couldn't download the photo. Check your connection and try again." };
+  }
+  try {
+    await MediaLibrary.Asset.create(file.uri);
+    return 'saved';
+  } catch {
+    return { error: "Couldn't save the photo to your gallery." };
+  } finally {
+    try {
+      file.delete();
+    } catch {}
+  }
 }

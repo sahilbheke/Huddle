@@ -376,7 +376,7 @@ export default function SpaceFeedScreen() {
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-type PostProps = { item: FeedItem; mine: boolean; photo?: string; onLongPress: () => void };
+type PostProps = { item: FeedItem; mine: boolean; photo?: string | null; onLongPress: () => void };
 
 function MessageBubble({ item, mine, photo, onLongPress }: PostProps) {
   const theme = useTheme();
