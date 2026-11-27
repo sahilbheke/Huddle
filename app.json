@@ -44,6 +44,16 @@
         }
       ],
       [
+        "expo-media-library",
+        {
+          "photosPermission": "Huddle uses your photos so you can share them in a space.",
+          "savePhotosPermission": "Huddle saves photos you download to your photo library.",
+          "granularPermissions": [
+            "photo"
+          ]
+        }
+      ],
+      [
         "expo-notifications",
         {
           "defaultChannel": "reminders"
