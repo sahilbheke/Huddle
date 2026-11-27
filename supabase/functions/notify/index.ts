@@ -39,6 +39,10 @@ Deno.serve(async (req) => {
     body: payload.body.slice(0, 160),
     sound: 'default',
     channelId: 'activity',
+    // Lets the app clear this chat's notifications once it's read, open the chat on tap,
+    // and show a Reply box (the "chat" category) to answer without opening the app.
+    data: payload.thread_id ? { thread_id: payload.thread_id } : { space_id: payload.space_id },
+    categoryId: 'chat',
   }));
   const results: unknown[] = [];
   for (let i = 0; i < messages.length; i += 100) {
