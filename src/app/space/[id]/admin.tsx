@@ -8,7 +8,7 @@ import { Button, ErrorText, Stepper } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth';
-import { PHOTOS_ENABLED, roleLabel, type Role } from '@/lib/spaces';
+import { roleLabel, type Role } from '@/lib/spaces';
 import { sendTestPush } from '@/lib/notifications';
 import { friendlyError, supabase } from '@/lib/supabase';
 
@@ -185,9 +185,7 @@ export default function AdminScreen() {
           <Stepper label="Rest days per week" value={rest} min={0} max={6} onChange={setRest} />
           <Stepper label="Activity check-ins per hour, each person" value={perHour} min={0} max={20} onChange={setPerHour} format={(v) => (v === 0 ? 'Off' : String(v))} />
           <ToggleRow label="Group chat" hint={chat ? 'Members can send messages (unlimited)' : 'Only check-ins can be posted'} value={chat} onValueChange={setChat} />
-          {PHOTOS_ENABLED ? (
-            <ToggleRow label="Proof photos" hint={photos ? 'Members can attach a photo' : 'No photos on check-ins'} value={photos} onValueChange={setPhotos} />
-          ) : null}
+          <ToggleRow label="Photos" hint={photos ? 'Members can share photos in chat and on check-ins' : 'No photos in this space'} value={photos} onValueChange={setPhotos} />
           <Button label="Save rules" onPress={saveRules} busy={savingRules} />
         </Card>
       </Section>

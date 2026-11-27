@@ -330,6 +330,61 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
 select delete_space(current_setting('t.ms')::uuid);
 do $$ begin assert (select count(*) from spaces where id = current_setting('t.ms')::uuid) = 0, 'space deleted'; end $$;
 
+-- Photo sharing: photo messages, deleting messages, removing check-in photos
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select set_config('t.ps', create_space('Photo Club', 'fitness', 2, 0, true)::text, false);
+select set_config('t.pcode', (select invite_code from spaces where id = current_setting('t.ps')::uuid), false);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select join_space(current_setting('t.pcode'));
+-- A photo with no text is fine; a message with neither is refused.
+select send_message(current_setting('t.ps')::uuid, null, current_setting('t.ps') || '/00000000-0000-0000-0000-00000000000b/a.jpg');
+select send_message(current_setting('t.ps')::uuid, '  look  ', current_setting('t.ps') || '/00000000-0000-0000-0000-00000000000b/b.jpg');
+select send_message(current_setting('t.ps')::uuid, 'text only');
+select pg_temp.expect_error(format($q$select send_message(%L, '   ')$q$, current_setting('t.ps')), 'empty message');
+select pg_temp.expect_error(format($q$select send_message(%L, 'hi', 'someone-else/x.jpg')$q$, current_setting('t.ps')), 'photo does not belong');
+do $$ declare s uuid := current_setting('t.ps')::uuid; begin
+  assert (select count(*) from space_feed(s) where kind = 'message' and photo_path is not null) = 2, 'feed has message photos';
+  assert (select body from space_feed(s) where photo_path like '%/b.jpg') = 'look', 'caption trimmed';
+  assert (select body from space_feed(s) where photo_path like '%/a.jpg') is null, 'photo-only message has no body';
+end $$;
+-- Someone else cannot delete b's message; b can, and gets the photo path back.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select join_space(current_setting('t.pcode'));
+select pg_temp.expect_error(format($q$select delete_message(%L)$q$,
+  (select id from messages where photo_path like '%/a.jpg')), 'only delete your own');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  assert delete_message((select id from messages where photo_path like '%/a.jpg')) like '%/a.jpg', 'delete returns photo path';
+  assert (select count(*) from messages where photo_path like '%/a.jpg') = 0, 'message deleted';
+end $$;
+-- The owner (an admin) can delete anyone's message.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin
+  assert delete_message((select id from messages where body = 'text only' and space_id = current_setting('t.ps')::uuid)) is null, 'no photo path';
+end $$;
+-- Check-in photo removal keeps the check-in.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select set_config('t.pc', (create_checkin(current_setting('t.ps')::uuid,
+  (select id from activity_types where space_id = current_setting('t.ps')::uuid and key = 'run'), '{"dist":2}', null,
+  current_setting('t.ps') || '/00000000-0000-0000-0000-00000000000b/run.jpg')).id::text, false);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select pg_temp.expect_error(format($q$select remove_checkin_photo(%L)$q$, current_setting('t.pc')), 'only remove photos');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin
+  assert remove_checkin_photo(current_setting('t.pc')::uuid) like '%/run.jpg', 'remove returns path';
+  assert (select photo_path from checkins where id = current_setting('t.pc')::uuid) is null, 'photo cleared, check-in kept';
+end $$;
+-- Photos off: photo messages are refused.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+update spaces set photos_enabled = false where id = current_setting('t.ps')::uuid;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select pg_temp.expect_error(format($q$select send_message(%L, null, %L)$q$, current_setting('t.ps'),
+  current_setting('t.ps') || '/00000000-0000-0000-0000-00000000000b/c.jpg'), 'photos are turned off');
+-- Only the owner can list a space's files for cleanup.
+select pg_temp.expect_error(format($q$select space_photo_paths(%L)$q$, current_setting('t.ps')), 'only the owner');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select count(*) from space_photo_paths(current_setting('t.ps')::uuid);
+
 reset role;
 
 \echo 'All rules tests passed'
