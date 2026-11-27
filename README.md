@@ -29,6 +29,27 @@ Milestones 1–5 done; milestone 6 (notifications) in progress.
 
 To run everything locally instead, `supabase start` uses `supabase/config.toml`, which already has test numbers.
 
+### With make
+
+A `Makefile` wraps the common commands. Run `make` to list every target.
+
+```bash
+make install         # npm install
+make env             # copy .env.example to .env (hosted Supabase)
+make dev             # start the Expo dev server against the project in .env
+make dev-local       # start local Supabase (Docker), write .env.local for it, start Expo
+make android | ios | web
+make functions       # serve the edge functions locally
+make db-reset        # recreate the local database from supabase/migrations
+make db-push         # apply migrations to the linked hosted project
+make check           # typecheck + lint
+make db-test         # rules engine tests (needs psql)
+make stop            # stop local Supabase
+make clean           # stop local Supabase, wipe its data, remove caches and .env.local
+```
+
+`make dev-local` points the app at this machine's LAN IP so a phone running Expo Go can reach it; override with `HOST=...` if the guess is wrong. It uses a global `supabase` CLI if installed, otherwise `npx supabase`.
+
 ## Notifications (milestone 6a)
 
 In-app live updates (new messages and check-ins appearing in the feed) work with no extra setup. Push notifications — the daily reminder and the "someone posted" alert when the app is closed — need a standalone build and a one-time backend setup:
