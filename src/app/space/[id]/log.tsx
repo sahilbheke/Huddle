@@ -19,7 +19,6 @@ export default function LogActivityScreen() {
   const { session, profile } = useAuth();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [types, setTypes] = useState<ActivityType[]>([]);
-  const [photosOn, setPhotosOn] = useState(false);
   const [typeId, setTypeId] = useState<string | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [caption, setCaption] = useState('');
@@ -35,15 +34,13 @@ export default function LogActivityScreen() {
         .eq('space_id', id)
         .eq('enabled', true)
         .order('sort'),
-      supabase.from('spaces').select('photos_enabled').eq('id', id).single(),
-    ]).then(([t, s]) => {
+    ]).then(([t]) => {
       const list = ((t.data as ActivityType[] | null) ?? []).map((x) => ({
         ...x,
         activity_fields: [...x.activity_fields].sort((a, b) => a.sort - b.sort),
       }));
       setTypes(list);
       setTypeId((cur) => cur ?? list[0]?.id ?? null);
-      setPhotosOn(!!s.data?.photos_enabled);
     });
   }, [id]);
 
@@ -156,7 +153,7 @@ export default function LogActivityScreen() {
         </Section>
       ) : null}
 
-      {type && photosOn ? (
+      {type ? (
         <Section title="Proof photo (optional)">
           {photo ? (
             <View style={styles.field}>

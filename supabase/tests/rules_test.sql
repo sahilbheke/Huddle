@@ -374,27 +374,20 @@ do $$ begin
   assert remove_checkin_photo(current_setting('t.pc')::uuid) like '%/run.jpg', 'remove returns path';
   assert (select photo_path from checkins where id = current_setting('t.pc')::uuid) is null, 'photo cleared, check-in kept';
 end $$;
--- Photos off: photo messages are refused.
+-- Photos work in every space, even one whose old photos setting is off.
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
 update spaces set photos_enabled = false where id = current_setting('t.ps')::uuid;
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
-select pg_temp.expect_error(format($q$select send_message(%L, null, %L)$q$, current_setting('t.ps'),
-  current_setting('t.ps') || '/00000000-0000-0000-0000-00000000000b/c.jpg'), 'photos are turned off');
+select send_message(current_setting('t.ps')::uuid, null, current_setting('t.ps') || '/00000000-0000-0000-0000-00000000000b/c.jpg');
 -- Photo upload rule
-select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
-update spaces set photos_enabled = true where id = current_setting('t.ps')::uuid;
-select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
 do $$ declare s text := current_setting('t.ps'); begin
   assert can_upload_photo(s || '/00000000-0000-0000-0000-00000000000b/x.jpg'), 'member can upload to own folder';
   assert not can_upload_photo(s || '/00000000-0000-0000-0000-00000000000a/x.jpg'), 'not into someone else''s folder';
   assert not can_upload_photo('not-a-uuid/00000000-0000-0000-0000-00000000000b/x.jpg'), 'bad path refused';
   assert not can_upload_photo(s || '/x.jpg'), 'path too short refused';
 end $$;
-select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
-update spaces set photos_enabled = false where id = current_setting('t.ps')::uuid;
-select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
 do $$ begin
-  assert not can_upload_photo(current_setting('t.ps') || '/00000000-0000-0000-0000-00000000000b/x.jpg'), 'photos off refused';
+  assert can_upload_photo(current_setting('t.ps') || '/00000000-0000-0000-0000-00000000000b/x.jpg'), 'upload allowed with old setting off';
 end $$;
 -- Only the owner can list a space's files for cleanup.
 select pg_temp.expect_error(format($q$select space_photo_paths(%L)$q$, current_setting('t.ps')), 'only the owner');
