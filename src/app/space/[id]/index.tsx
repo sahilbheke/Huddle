@@ -1,10 +1,11 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image } from 'expo-image';
-import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FeedPhoto } from '@/components/feed-photo';
+import { Avatar, Celebration, CheerButton, DaySeparator, Nudge, TeamPulse, dayLabel, type PulseMember } from '@/components/space-chat';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { ErrorText } from '@/components/ui';
@@ -32,7 +33,12 @@ type FeedItem = {
   cheered: boolean;
 };
 type SpaceHead = { name: string; chat_enabled: boolean; posts_per_hour: number };
-type Today = { members: number; done: number; checkins: number };
+type Row =
+  | { kind: 'day'; id: string; label: string }
+  | { kind: 'post'; id: string; item: FeedItem; first: boolean; last: boolean };
+
+const QUICK_BEFORE = ['💪 Doing mine today', '👏 Great work, team', "🔥 Let's go"];
+const QUICK_AFTER = ['👏 Great work, team', '✅ Done for today', "💪 Who's next?"];
 
 const PAGE = 40;
 
@@ -42,11 +48,15 @@ export default function SpaceFeedScreen() {
   const me = session?.user.id;
   const { id } = useLocalSearchParams<{ id: string }>();
   const [space, setSpace] = useState<SpaceHead | null>(null);
-  const [today, setToday] = useState<Today | null>(null);
+  const [team, setTeam] = useState<PulseMember[] | null>(null);
+  const [hideNudge, setHideNudge] = useState(false);
+  const [celebrate, setCelebrate] = useState<number | null>(null);
+  const wasDone = useRef<boolean | null>(null);
   const [items, setItems] = useState<FeedItem[]>([]);
   const [iLeft, setILeft] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [draft, setDraft] = useState('');
+  const [typing, setTyping] = useState(false);
   const [photo, setPhoto] = useState<Photo | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
@@ -55,14 +65,24 @@ export default function SpaceFeedScreen() {
 
   /** Reloads the newest page and the header numbers, keeping older pages already loaded. */
   const refresh = useCallback(async () => {
-    const [s, t, f, mem] = await Promise.all([
+    const [s, b, f, mem, roster] = await Promise.all([
       supabase.from('spaces').select('name, chat_enabled, posts_per_hour').eq('id', id).maybeSingle(),
-      supabase.rpc('space_today', { p_space: id }).maybeSingle(),
+      supabase.rpc('space_board', { p_space: id }),
       supabase.rpc('space_feed', { p_space: id, p_limit: PAGE }),
       supabase.from('space_members').select('left_at').eq('space_id', id).eq('user_id', me ?? '').maybeSingle(),
+      supabase.from('space_members').select('user_id').eq('space_id', id).not('left_at', 'is', null),
     ]);
     setSpace(s.data as SpaceHead | null);
-    setToday(t.data as Today | null);
+    // Only people still in the space count toward today's rings.
+    const gone = new Set(((roster.data as { user_id: string }[] | null) ?? []).map((r) => r.user_id));
+    const members = ((b.data as PulseMember[] | null) ?? []).filter((m) => !gone.has(m.user_id));
+    setTeam(b.error ? null : members);
+    // Just came back from logging? Celebrate the streak once.
+    const mine = members.find((m) => m.user_id === me);
+    if (mine) {
+      if (wasDone.current === false && mine.done_today) setCelebrate(mine.streak);
+      wasDone.current = mine.done_today;
+    }
     const left = !!(mem.data as { left_at: string | null } | null)?.left_at;
     setILeft(left);
     if (!left) await supabase.rpc('mark_space_read', { p_space: id });
@@ -210,16 +230,26 @@ export default function SpaceFeedScreen() {
     if (err) refresh();
   }
 
+  const mine = team?.find((m) => m.user_id === me);
+  const doneToday = !!mine?.done_today;
+  const doneCount = team?.filter((m) => m.done_today).length ?? 0;
+  const hasDraft = !!draft.trim() || !!photo;
+  const rows = useMemo(() => buildRows(items, hasMore), [items, hasMore]);
+  // The activity name only helps when a space has more than one kind.
+  const multiType = useMemo(() => new Set(items.filter((i) => i.kind === 'checkin').map((i) => i.type_label)).size > 1, [items]);
+  const openLog = () => router.push({ pathname: '/space/[id]/log', params: { id } });
+  const endCelebration = useCallback(() => setCelebrate(null), []);
+
   return (
     <ThemedView style={styles.fill}>
       <SafeAreaView style={styles.fill} edges={['top', 'bottom']}>
-        <View style={[styles.header, { borderBottomColor: theme.border }]}>
+        <View style={[styles.header, { borderBottomColor: team?.length ? 'transparent' : theme.border }]}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Back"
             onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
             hitSlop={12}
-            style={[styles.iconBtn, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            style={styles.backBtn}>
             <ThemedText style={styles.backGlyph}>‹</ThemedText>
           </Pressable>
           <Pressable
@@ -237,56 +267,63 @@ export default function SpaceFeedScreen() {
                 {space?.name ?? ' '}
               </ThemedText>
               <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                {today ? `${today.done} of ${today.members} done today · tap for info` : 'Tap for info'}
+                {mine && mine.streak > 0 ? (
+                  <ThemedText type="smallBold" style={{ color: theme.accent }}>
+                    🔥 {mine.streak}-day streak
+                  </ThemedText>
+                ) : team?.length ? (
+                  `${doneCount} of ${team.length} in today`
+                ) : null}
+                {team?.length ? ' · tap for info' : 'Tap for info'}
               </ThemedText>
             </View>
           </Pressable>
         </View>
+        {team?.length && !iLeft ? <TeamPulse members={team} me={me} /> : null}
 
         <KeyboardAvoidingView style={styles.fill} behavior="padding">
-          <FlatList
-            inverted
-            data={items}
-            keyExtractor={(i) => i.id}
-            contentContainerStyle={styles.list}
-            onEndReached={loadMore}
-            onEndReachedThreshold={0.4}
-            renderItem={({ item }) =>
-              item.kind === 'message' ? (
-                <MessageBubble item={item} mine={item.user_id === me} photo={item.photo_path ? photoUrls[item.photo_path] : undefined} onLongPress={() => manage(item)} />
-              ) : (
-                <CheckinCard
-                  item={item}
-                  mine={item.user_id === me}
-                  photo={item.photo_path ? photoUrls[item.photo_path] : undefined}
-                  onCheer={() => cheer(item)}
-                  onLongPress={() => manage(item)}
-                />
-              )
-            }
-            ListHeaderComponent={
-              today ? (
-                <View style={[styles.today, { backgroundColor: theme.positiveSoft }]}>
-                  <ThemedText type="smallBold" style={{ color: theme.positive }}>
-                    Today in numbers
-                  </ThemedText>
-                  <ThemedText type="small">
-                    {today.done} of {today.members} members checked in · {today.checkins} check-in{today.checkins === 1 ? '' : 's'}
-                  </ThemedText>
-                </View>
-              ) : undefined
-            }
-            ListEmptyComponent={
-              space ? (
-                <View style={styles.empty}>
-                  <ThemedText type="smallBold">Nothing here yet</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    Log the first activity to start the streak.
-                  </ThemedText>
-                </View>
-              ) : undefined
-            }
-          />
+          <View style={styles.fill}>
+            <FlatList
+              inverted
+              data={rows}
+              keyExtractor={(r) => r.id}
+              contentContainerStyle={styles.list}
+              onEndReached={loadMore}
+              onEndReachedThreshold={0.4}
+              renderItem={({ item: row }) => {
+                if (row.kind === 'day') return <DaySeparator label={row.label} />;
+                const { item, first, last } = row;
+                const photoUri = item.photo_path ? photoUrls[item.photo_path] : undefined;
+                return item.kind === 'message' ? (
+                  <MessageBubble item={item} mine={item.user_id === me} first={first} last={last} photo={photoUri} onLongPress={() => manage(item)} />
+                ) : (
+                  <CheckinCard
+                    item={item}
+                    mine={item.user_id === me}
+                    showType={multiType}
+                    photo={photoUri}
+                    onCheer={() => cheer(item)}
+                    onLongPress={() => manage(item)}
+                  />
+                );
+              }}
+              ListEmptyComponent={
+                space ? (
+                  <View style={styles.empty}>
+                    <ThemedText type="smallBold">Nothing here yet</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Log the first activity to start the streak.
+                    </ThemedText>
+                  </View>
+                ) : undefined
+              }
+            />
+            {celebrate !== null ? (
+              <Celebration title={`Day ${celebrate} 🔥`} body="Streak kept. Your team can see it." onDone={endCelebration} />
+            ) : null}
+          </View>
+
+          {team && !iLeft && !hideNudge ? <Nudge members={team} me={me} onLog={openLog} onDismiss={() => setHideNudge(true)} /> : null}
 
           <View style={[styles.composer, { borderTopColor: theme.border, backgroundColor: theme.background }]}>
             {iLeft ? (
@@ -314,57 +351,100 @@ export default function SpaceFeedScreen() {
                     </Pressable>
                   </View>
                 ) : null}
-                <View style={styles.composerRow}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Log activity"
-                    onPress={() => router.push({ pathname: '/space/[id]/log', params: { id } })}
-                    style={[styles.logBtn, { backgroundColor: theme.accent }, !space?.chat_enabled && styles.grow]}>
-                    <ThemedText type="smallBold" style={{ color: theme.accentText }}>
-                      {space?.chat_enabled ? '+ Log' : '+ Log activity'}
-                    </ThemedText>
-                  </Pressable>
-                  {space?.chat_enabled ? (
-                    <>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Add a photo"
-                        onPress={attach}
-                        disabled={sending}
-                        style={[styles.iconBtn, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-                        <ThemedText>📷</ThemedText>
-                      </Pressable>
-                      <TextInput
-                        accessibilityLabel="Message"
-                        value={draft}
-                        onChangeText={setDraft}
-                        placeholder="Message"
-                        placeholderTextColor={theme.textSecondary}
-                        multiline
-                        maxLength={2000}
-                        style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
-                      />
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Send"
-                        disabled={(!draft.trim() && !photo) || sending}
-                        onPress={send}
-                        style={[
-                          styles.iconBtn,
-                          { backgroundColor: theme.positive, opacity: (!draft.trim() && !photo) || sending ? 0.5 : 1, borderColor: theme.positive },
-                        ]}>
-                        <ThemedText type="smallBold" style={{ color: theme.background }}>
-                          ↑
-                        </ThemedText>
-                      </Pressable>
-                    </>
-                  ) : null}
-                </View>
-                {space && !space.chat_enabled ? (
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.center}>
-                    Group chat is off in this space. Only check-ins can be posted.
-                  </ThemedText>
-                ) : null}
+                {space?.chat_enabled ? (
+                  <>
+                    {typing && !hasDraft ? (
+                      <ScrollView
+                        horizontal
+                        keyboardShouldPersistTaps="handled"
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.quick}
+                        accessibilityLabel="Quick replies">
+                        {(doneToday ? QUICK_AFTER : QUICK_BEFORE).map((q) => (
+                          <Pressable
+                            key={q}
+                            accessibilityRole="button"
+                            accessibilityHint="Puts this text in the message box"
+                            onPress={() => setDraft(q)}
+                            style={[styles.quickChip, { borderColor: theme.border, backgroundColor: theme.background }]}>
+                            <ThemedText type="small">{q}</ThemedText>
+                          </Pressable>
+                        ))}
+                      </ScrollView>
+                    ) : null}
+                    <View style={styles.composerRow}>
+                      <View style={[styles.inputPill, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+                        <TextInput
+                          accessibilityLabel="Message"
+                          value={draft}
+                          onChangeText={setDraft}
+                          onFocus={() => setTyping(true)}
+                          onBlur={() => setTyping(false)}
+                          placeholder="Message the group"
+                          placeholderTextColor={theme.textSecondary}
+                          multiline
+                          maxLength={2000}
+                          style={[styles.input, { color: theme.text }]}
+                        />
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Add a photo"
+                          onPress={attach}
+                          disabled={sending}
+                          hitSlop={6}
+                          style={styles.cameraBtn}>
+                          <ThemedText style={styles.cameraGlyph}>📷</ThemedText>
+                        </Pressable>
+                      </View>
+                      {hasDraft ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Send"
+                          disabled={sending}
+                          onPress={send}
+                          style={[styles.roundBtn, { backgroundColor: theme.accent, opacity: sending ? 0.6 : 1 }]}>
+                          <ThemedText style={[styles.sendGlyph, { color: theme.accentText }]}>➤</ThemedText>
+                        </Pressable>
+                      ) : doneToday ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Log another activity"
+                          onPress={openLog}
+                          style={[styles.roundBtn, { backgroundColor: theme.accent }]}>
+                          <ThemedText style={[styles.plusGlyph, { color: theme.accentText }]}>+</ThemedText>
+                        </Pressable>
+                      ) : (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Log activity"
+                          onPress={openLog}
+                          style={[styles.logPill, { backgroundColor: theme.accent }]}>
+                          <ThemedText style={[styles.plusGlyph, { color: theme.accentText }]}>+</ThemedText>
+                          <ThemedText type="smallBold" style={[styles.logText, { color: theme.accentText }]}>
+                            Log
+                          </ThemedText>
+                        </Pressable>
+                      )}
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Log activity"
+                      onPress={openLog}
+                      style={[styles.logPill, styles.logWide, { backgroundColor: doneToday ? theme.backgroundElement : theme.accent }]}>
+                      <ThemedText type="smallBold" style={[styles.logText, { color: doneToday ? theme.text : theme.accentText }]}>
+                        {doneToday ? '+ Log another' : '+ Log today'}
+                      </ThemedText>
+                    </Pressable>
+                    {space ? (
+                      <ThemedText type="small" themeColor="textSecondary" style={styles.center}>
+                        Group chat is off in this space. Only check-ins can be posted.
+                      </ThemedText>
+                    ) : null}
+                  </>
+                )}
               </>
             )}
           </View>
@@ -375,18 +455,47 @@ export default function SpaceFeedScreen() {
 }
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const dayKey = (iso: string) => new Date(iso).toDateString();
+
+/**
+ * Turns the newest-first feed into list rows for the inverted list: a day label above each
+ * day's first post, and first/last flags so a run of posts by one person shows their name
+ * once at the top and their face once at the bottom.
+ */
+function buildRows(items: FeedItem[], hasMore: boolean): Row[] {
+  const now = new Date();
+  const same = (a?: FeedItem, b?: FeedItem) =>
+    !!a && !!b && a.user_id === b.user_id && a.kind === 'message' && b.kind === 'message' && dayKey(a.created_at) === dayKey(b.created_at);
+  const rows: Row[] = [];
+  items.forEach((item, i) => {
+    const newer = items[i - 1];
+    const older = items[i + 1];
+    rows.push({ kind: 'post', id: item.id, item, first: !same(item, older), last: !same(item, newer) });
+    // Older pages may still hold more of this day, so wait for them before labelling it.
+    if (older ? dayKey(older.created_at) !== dayKey(item.created_at) : !hasMore) {
+      rows.push({ kind: 'day', id: `day-${dayKey(item.created_at)}`, label: dayLabel(item.created_at, now) });
+    }
+  });
+  return rows;
+}
 
 type PostProps = { item: FeedItem; mine: boolean; photo?: string | null; onLongPress: () => void };
 
-function MessageBubble({ item, mine, photo, onLongPress }: PostProps) {
+function MessageBubble({ item, mine, first, last, photo, onLongPress }: PostProps & { first: boolean; last: boolean }) {
   const theme = useTheme();
   return (
-    <View style={[styles.bubbleRow, mine && styles.mineRow]}>
+    <View style={[styles.row, mine && styles.mineRow]}>
+      {!mine ? last ? <Avatar userId={item.user_id} name={item.name} /> : <View style={styles.avatarGap} /> : null}
       <Pressable
         onLongPress={onLongPress}
-        style={[styles.bubble, item.photo_path && styles.photoBubble, { backgroundColor: mine ? theme.accentSoft : theme.backgroundElement }]}>
-        {!mine ? (
-          <ThemedText type="smallBold" style={{ color: colorForUser(item.user_id) }}>
+        style={[
+          styles.bubble,
+          item.photo_path && styles.photoBubble,
+          { backgroundColor: mine ? theme.accentSoft : theme.backgroundElement },
+          last && (mine ? styles.tailRight : styles.tailLeft),
+        ]}>
+        {!mine && first ? (
+          <ThemedText type="smallBold" style={[styles.name, { color: colorForUser(item.user_id) }]} numberOfLines={1}>
             {item.name}
           </ThemedText>
         ) : null}
@@ -400,27 +509,37 @@ function MessageBubble({ item, mine, photo, onLongPress }: PostProps) {
   );
 }
 
-function CheckinCard({ item, mine, photo, onCheer, onLongPress }: PostProps & { onCheer: () => void }) {
+function CheckinCard({ item, mine, showType, photo, onCheer, onLongPress }: PostProps & { showType: boolean; onCheer: () => void }) {
   const theme = useTheme();
   const vals = item.vals ?? {};
   const summary = summarize(item.fields ?? [], vals);
   const derived = derive(item.derive_kind, vals);
+  const label = showType ? item.type_label : null;
   return (
-    <View style={[styles.cardRow, mine && styles.mineRow]}>
+    <View style={[styles.row, mine && styles.mineRow]}>
+      {!mine ? <Avatar userId={item.user_id} name={item.name} /> : null}
       <Pressable
         onLongPress={onLongPress}
-        style={[styles.card, item.photo_path && styles.photoBubble, { borderColor: theme.border, backgroundColor: theme.backgroundElement }]}>
-        <View style={styles.cardHead}>
-          <ThemedText type="smallBold" style={[styles.grow, { color: mine ? theme.positive : colorForUser(item.user_id) }]} numberOfLines={1}>
-            {mine ? 'You' : item.name}
+        accessibilityLabel={`${mine ? 'You' : item.name} checked in${summary ? `: ${summary}` : ''}`}
+        style={[
+          styles.card,
+          item.photo_path && styles.photoBubble,
+          mine
+            ? [styles.tailRight, { backgroundColor: theme.accentSoft, borderColor: theme.accentSoft }]
+            : [styles.tailLeft, { backgroundColor: theme.backgroundElement, borderColor: theme.border }],
+        ]}>
+        {!mine || label ? (
+          <ThemedText type="smallBold" numberOfLines={1} style={styles.name}>
+            {!mine ? <ThemedText type="smallBold" style={{ color: colorForUser(item.user_id) }}>{item.name}</ThemedText> : null}
+            {label ? <ThemedText type="small" themeColor="textSecondary">{!mine ? ` · ${label}` : label}</ThemedText> : null}
           </ThemedText>
-          {item.type_label ? (
-            <ThemedText type="smallBold" style={{ color: theme.accent }} numberOfLines={1}>
-              {item.type_label}
-            </ThemedText>
-          ) : null}
+        ) : null}
+        <View style={styles.bigRow}>
+          <View style={[styles.doneDot, { backgroundColor: theme.positive }]}>
+            <ThemedText style={[styles.doneTick, { color: theme.background }]}>✓</ThemedText>
+          </View>
+          <ThemedText style={styles.summary}>{summary || item.type_label || 'Checked in'}</ThemedText>
         </View>
-        {summary ? <ThemedText style={styles.summary}>{summary}</ThemedText> : null}
         {derived ? (
           <ThemedText type="smallBold" style={{ color: theme.positive }}>
             {derived}
@@ -429,18 +548,16 @@ function CheckinCard({ item, mine, photo, onCheer, onLongPress }: PostProps & { 
         {item.photo_path ? <FeedPhoto uri={photo} label={`Proof photo from ${mine ? 'you' : item.name}`} /> : null}
         {item.body ? <ThemedText type="small">{item.body}</ThemedText> : null}
         <View style={styles.cardFoot}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={item.cheered ? 'Remove cheer' : 'Cheer'}
-            accessibilityState={{ selected: item.cheered }}
-            onPress={onCheer}
-            style={[
-              styles.cheer,
-              { borderColor: item.cheered ? theme.accent : theme.border, backgroundColor: item.cheered ? theme.accentSoft : theme.background },
-            ]}>
-            <ThemedText type="small">👏 {item.cheers > 0 ? item.cheers : 'Cheer'}</ThemedText>
-          </Pressable>
-          <ThemedText type="small" themeColor="textSecondary">
+          {mine ? (
+            item.cheers > 0 ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                👏 {item.cheers} {item.cheers === 1 ? 'cheer' : 'cheers'}
+              </ThemedText>
+            ) : null
+          ) : (
+            <CheerButton count={item.cheers} cheered={item.cheered} onPress={onCheer} label />
+          )}
+          <ThemedText type="small" themeColor="textSecondary" style={styles.footTime}>
             {time(item.created_at)}
           </ThemedText>
         </View>
@@ -456,36 +573,50 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingHorizontal: Spacing.three,
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.two,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  iconBtn: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  backGlyph: { fontSize: 28, lineHeight: 30 },
+  backBtn: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
+  backGlyph: { fontSize: 32, lineHeight: 36 },
   titleRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, minHeight: 44 },
-  headAvatar: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  headAvatar: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   titles: { flex: 1, minWidth: 0, justifyContent: 'center' },
-  title: { fontSize: 18 },
-  list: { padding: Spacing.three, gap: Spacing.two, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  today: { borderRadius: 14, padding: Spacing.three, gap: Spacing.half },
+  title: { fontSize: 18, lineHeight: 24 },
+  list: { paddingHorizontal: Spacing.two + 2, paddingVertical: Spacing.two, gap: 6, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
   empty: { alignItems: 'center', gap: Spacing.one, paddingVertical: Spacing.five, transform: [{ scaleY: -1 }] },
-  bubbleRow: { flexDirection: 'row' },
+  row: { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
   mineRow: { justifyContent: 'flex-end' },
-  photoBubble: { width: '70%' },
+  avatarGap: { width: 28 },
+  photoBubble: { width: '75%' },
+  bubble: { maxWidth: '78%', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 7, gap: 2 },
+  tailLeft: { borderBottomLeftRadius: 4 },
+  tailRight: { borderBottomRightRadius: 4 },
+  name: { fontSize: 13, lineHeight: 18 },
+  time: { alignSelf: 'flex-end', fontSize: 11, lineHeight: 14 },
+  card: { maxWidth: '78%', borderRadius: 18, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 10, gap: 4 },
+  bigRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  doneDot: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  doneTick: { fontSize: 12, lineHeight: 16, fontWeight: '700' },
+  summary: { fontSize: 20, lineHeight: 26, fontWeight: '700', flexShrink: 1 },
+  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginTop: 2 },
+  footTime: { marginLeft: 'auto', fontSize: 11, lineHeight: 14 },
   attachRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
   attachThumb: { width: 48, height: 48, borderRadius: 8 },
-  bubble: { maxWidth: '70%', borderRadius: 14, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, gap: 2 },
-  time: { alignSelf: 'flex-end', fontSize: 11 },
-  cardRow: { flexDirection: 'row' },
-  card: { maxWidth: '70%', borderRadius: 14, borderWidth: 1, padding: Spacing.three, gap: Spacing.one },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  summary: { fontSize: 18, fontWeight: '600' },
-  cheer: { borderWidth: 1, borderRadius: 999, paddingHorizontal: Spacing.three, minHeight: 36, justifyContent: 'center' },
-  cardFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.one, gap: Spacing.two },
   leftBanner: { paddingVertical: Spacing.two, paddingHorizontal: Spacing.three },
-  composer: { borderTopWidth: StyleSheet.hairlineWidth, padding: Spacing.two, gap: Spacing.one },
+  composer: { borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: Spacing.two, paddingTop: Spacing.two, paddingBottom: Spacing.two, gap: Spacing.two, marginTop: Spacing.two },
+  quick: { gap: Spacing.two, paddingHorizontal: 2 },
+  quickChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, minHeight: 34, justifyContent: 'center' },
   composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two, width: '100%', maxWidth: MaxContentWidth, alignSelf: 'center' },
-  logBtn: { minHeight: 44, borderRadius: 12, paddingHorizontal: Spacing.three, alignItems: 'center', justifyContent: 'center' },
-  input: { flex: 1, minHeight: 44, maxHeight: 120, borderRadius: 12, borderWidth: 1, paddingHorizontal: Spacing.three, paddingVertical: 10, fontSize: 16 },
+  inputPill: { flex: 1, flexDirection: 'row', alignItems: 'flex-end', minHeight: 48, borderRadius: 24, borderWidth: 1, paddingLeft: Spacing.three, paddingRight: 4 },
+  input: { flex: 1, minHeight: 46, maxHeight: 120, paddingTop: 12, paddingBottom: 12, fontSize: 16 },
+  cameraBtn: { width: 40, height: 46, alignItems: 'center', justifyContent: 'center' },
+  cameraGlyph: { fontSize: 20, lineHeight: 26 },
+  roundBtn: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  sendGlyph: { fontSize: 20, lineHeight: 24, marginLeft: 3 },
+  plusGlyph: { fontSize: 24, lineHeight: 28, fontWeight: '700' },
+  logPill: { height: 48, borderRadius: 24, paddingLeft: 14, paddingRight: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
+  logWide: { alignSelf: 'stretch' },
+  logText: { fontSize: 16, lineHeight: 22 },
 });
